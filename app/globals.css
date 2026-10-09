@@ -1,0 +1,1213 @@
+/* app/globals.css */
+/* ============================================================
+   SISTEMA DE DISEÑO — Gestión de Oficina (Estudio Caillaux)
+
+   UX GLOBAL
+   - Base blanca/gris claro
+   - Sidebar claro con sombra
+   - Verde esmeralda para Panel Admin
+   - Azul Salesforce para Gestor
+   - Jerarquía por sombra, tipografía y espacios
+   - Componentes reutilizables
+   - Estados interactivos consistentes
+   - Responsive global
+   - Soporte para reduced motion
+
+   IMPORTANTE:
+   ============================================================ */
+
+@import "tailwindcss";
+
+/* ============================================================
+   VARIABLES GLOBALES
+   ============================================================ */
+
+:root {
+  /* --- Color: superficie y fondo --- */
+  --color-fondo: #fafafa;
+  --color-fondo-sutil: #f4f4f5;
+  --color-superficie: #ffffff;
+  --color-superficie-hover: #f9fafb;
+
+  /* --- Color: marca y navegación --- */
+  --color-marca: #18181b;
+  --color-marca-claro: #27272a;
+  --color-marca-texto: #ffffff;
+
+  /* --- Color: acento único (Panel Admin) --- */
+  --color-accion: #0d6e4f;
+  --color-accion-hover: #0a5940;
+  --color-accion-suave: #ecfdf5;
+
+  /* --- Color: semántico --- */
+  --color-exito: #15803d;
+  --color-exito-suave: #f0fdf4;
+
+  --color-alerta: #b45309;
+  --color-alerta-suave: #fffbeb;
+
+  --color-error: #b91c1c;
+  --color-error-suave: #fef2f2;
+
+  --color-info: #2563eb;
+  --color-info-suave: #eff6ff;
+
+  /* --- Color: texto --- */
+  --color-texto: #18181b;
+  --color-texto-suave: #71717a;
+  --color-texto-tenue: #a1a1aa;
+
+  /* --- Color: bordes --- */
+  --color-borde: #e4e4e7;
+  --color-borde-fuerte: #d4d4d8;
+
+  /* --- Tipografía --- */
+  --texto-xs: 0.75rem;
+  --texto-sm: 0.875rem;
+  --texto-base: 1rem;
+  --texto-lg: 1.125rem;
+  --texto-xl: 1.5rem;
+  --texto-2xl: 2rem;
+  --texto-3xl: 2.5rem;
+
+  /* --- Espaciado --- */
+  --espacio-xs: 0.5rem;
+  --espacio-sm: 0.75rem;
+  --espacio-md: 1rem;
+  --espacio-lg: 1.5rem;
+  --espacio-xl: 2rem;
+  --espacio-2xl: 3rem;
+
+  /* --- Radios --- */
+  --radio-sm: 0.375rem;
+  --radio-md: 0.5rem;
+  --radio-lg: 0.75rem;
+  --radio-xl: 1rem;
+
+  /* --- Sombras --- */
+  --sombra-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+
+  --sombra-md: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+
+  --sombra-lg: 0 4px 12px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04);
+
+  --sombra-xl: 0 12px 30px rgba(0, 0, 0, 0.12), 0 4px 10px rgba(0, 0, 0, 0.06);
+
+  --sombra-focus: 0 0 0 3px rgba(13, 110, 79, 0.15);
+
+  /* --- Transiciones --- */
+  --transicion-rapida: 120ms ease;
+  --transicion-base: 200ms ease;
+  --transicion-suave: 300ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* --- Z-index --- */
+  --z-dropdown: 30;
+  --z-sticky: 40;
+  --z-overlay: 50;
+  --z-modal: 60;
+  --z-toast: 70;
+}
+
+/* ============================================================
+   TEMA GESTOR
+   ============================================================ */
+
+.tema-gestor {
+  --color-accion: #0176d3;
+  --color-accion-hover: #014486;
+  --color-accion-suave: #eaf5fe;
+
+  --sombra-focus: 0 0 0 3px rgba(1, 118, 211, 0.15);
+
+  --color-info: #0176d3;
+  --color-info-suave: #eaf5fe;
+}
+
+/* ============================================================
+   BASE GLOBAL
+   ============================================================ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  background: var(--color-fondo);
+  color: var(--color-texto);
+  font-size: var(--texto-sm);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+::selection {
+  background: var(--color-accion-suave);
+  color: var(--color-texto);
+}
+
+/* ============================================================
+   SCROLLBAR
+   ============================================================ */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-borde-fuerte) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--color-borde-fuerte);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--color-texto-tenue);
+}
+
+/* ============================================================
+   DATOS
+   ============================================================ */
+
+.dato-numerico {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============================================================
+   TARJETAS
+   ============================================================ */
+
+.tarjeta {
+  background: var(--color-superficie);
+  border-radius: var(--radio-lg);
+  box-shadow: var(--sombra-md);
+  transition:
+    box-shadow var(--transicion-base),
+    transform var(--transicion-base);
+}
+
+.tarjeta-interactiva {
+  cursor: pointer;
+}
+
+.tarjeta-interactiva:hover {
+  box-shadow: var(--sombra-lg);
+  transform: translateY(-1px);
+}
+
+.tarjeta-interactiva:focus-visible {
+  outline: none;
+  box-shadow: var(--sombra-focus), var(--sombra-md);
+}
+
+/* ============================================================
+   CHIPS / BADGES
+   ============================================================ */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  min-height: 1.5rem;
+  padding: 0.125rem 0.625rem;
+  border-radius: 999px;
+  font-size: var(--texto-xs);
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.chip-neutral {
+  background: var(--color-fondo-sutil);
+  color: var(--color-texto-suave);
+}
+
+.chip-accion {
+  background: var(--color-accion-suave);
+  color: var(--color-accion);
+}
+
+.chip-exito {
+  background: var(--color-exito-suave);
+  color: var(--color-exito);
+}
+
+.chip-alerta {
+  background: var(--color-alerta-suave);
+  color: var(--color-alerta);
+}
+
+.chip-error {
+  background: var(--color-error-suave);
+  color: var(--color-error);
+}
+
+.chip-info {
+  background: var(--color-info-suave);
+  color: var(--color-info);
+}
+
+/* ============================================================
+   BOTONES
+   ============================================================ */
+
+.boton-primario,
+.boton-secundario,
+.boton-terciario,
+.boton-peligro {
+  min-height: 2.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: var(--radio-md);
+  padding: 0.5rem 1.25rem;
+  font-size: var(--texto-sm);
+  font-weight: 500;
+  line-height: 1.2;
+  transition:
+    background var(--transicion-rapida),
+    color var(--transicion-rapida),
+    border-color var(--transicion-rapida),
+    box-shadow var(--transicion-rapida),
+    transform var(--transicion-rapida);
+}
+
+.boton-primario {
+  background: var(--color-accion);
+  color: white;
+  border: 1px solid var(--color-accion);
+}
+
+.boton-primario:hover:not(:disabled) {
+  background: var(--color-accion-hover);
+}
+
+.boton-primario:active:not(:disabled),
+.boton-secundario:active:not(:disabled),
+.boton-terciario:active:not(:disabled),
+.boton-peligro:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.boton-primario:focus-visible,
+.boton-secundario:focus-visible,
+.boton-terciario:focus-visible,
+.boton-peligro:focus-visible {
+  outline: none;
+  box-shadow: var(--sombra-focus);
+}
+
+.boton-primario:disabled,
+.boton-secundario:disabled,
+.boton-terciario:disabled,
+.boton-peligro:disabled {
+  opacity: 0.5;
+}
+
+.boton-secundario {
+  background: transparent;
+  color: var(--color-accion);
+  border: 1px solid var(--color-accion);
+}
+
+.boton-secundario:hover:not(:disabled) {
+  background: var(--color-accion-suave);
+}
+
+.boton-secundario.activo {
+  background: var(--color-accion);
+  color: white;
+}
+
+.boton-terciario {
+  background: transparent;
+  color: var(--color-texto-suave);
+  border: 1px solid transparent;
+}
+
+.boton-terciario:hover:not(:disabled) {
+  background: var(--color-fondo-sutil);
+  color: var(--color-texto);
+}
+
+.boton-peligro {
+  background: var(--color-error);
+  color: white;
+  border: 1px solid var(--color-error);
+}
+
+.boton-peligro:hover:not(:disabled) {
+  background: #991b1b;
+}
+
+/* ============================================================
+   INPUTS
+   ============================================================ */
+
+.input-estandar {
+  width: 100%;
+  min-height: 2.5rem;
+  background: var(--color-fondo-sutil);
+  border: 1px solid transparent;
+  border-radius: var(--radio-md);
+  padding: 0.5rem 0.75rem;
+  font-size: var(--texto-sm);
+  color: var(--color-texto);
+  transition:
+    box-shadow var(--transicion-rapida),
+    border-color var(--transicion-rapida),
+    background var(--transicion-rapida);
+}
+
+.input-estandar::placeholder {
+  color: var(--color-texto-tenue);
+}
+
+.input-estandar:hover:not(:disabled) {
+  background: var(--color-superficie);
+  border-color: var(--color-borde);
+}
+
+.input-estandar:focus {
+  outline: none;
+  border-color: var(--color-accion);
+  box-shadow: var(--sombra-focus);
+  background: var(--color-superficie);
+}
+
+.input-estandar:focus-visible {
+  outline: none;
+}
+
+.input-estandar:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ============================================================
+   SELECTS
+   ============================================================ */
+
+.select-estandar {
+  width: 100%;
+  min-height: 2.5rem;
+  appearance: none;
+  background: var(--color-fondo-sutil)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")
+    no-repeat;
+  background-position: right 0.75rem center;
+  border: 1px solid transparent;
+  border-radius: var(--radio-md);
+  padding: 0.5rem 2.5rem 0.5rem 0.75rem;
+  font-size: var(--texto-sm);
+  color: var(--color-texto);
+  transition:
+    box-shadow var(--transicion-rapida),
+    border-color var(--transicion-rapida),
+    background-color var(--transicion-rapida);
+}
+
+.select-estandar:hover:not(:disabled) {
+  background-color: var(--color-superficie);
+  border-color: var(--color-borde);
+}
+
+.select-estandar:focus {
+  outline: none;
+  border-color: var(--color-accion);
+  box-shadow: var(--sombra-focus);
+  background-color: var(--color-superficie);
+}
+
+.select-estandar:focus-visible {
+  outline: none;
+}
+
+.select-estandar:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ============================================================
+   TEXTAREA
+   ============================================================ */
+
+.textarea-estandar {
+  width: 100%;
+  min-height: 6rem;
+  resize: vertical;
+  background: var(--color-fondo-sutil);
+  border: 1px solid transparent;
+  border-radius: var(--radio-md);
+  padding: 0.75rem;
+  font-size: var(--texto-sm);
+  color: var(--color-texto);
+  line-height: 1.5;
+  transition:
+    box-shadow var(--transicion-rapida),
+    border-color var(--transicion-rapida),
+    background var(--transicion-rapida);
+}
+
+.textarea-estandar::placeholder {
+  color: var(--color-texto-tenue);
+}
+
+.textarea-estandar:hover:not(:disabled) {
+  background: var(--color-superficie);
+  border-color: var(--color-borde);
+}
+
+.textarea-estandar:focus {
+  outline: none;
+  border-color: var(--color-accion);
+  box-shadow: var(--sombra-focus);
+  background: var(--color-superficie);
+}
+
+.textarea-estandar:focus-visible {
+  outline: none;
+}
+
+.textarea-estandar:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ============================================================
+   CHECKBOX / RADIO
+   ============================================================ */
+
+.checkbox-estandar,
+.radio-estandar {
+  accent-color: var(--color-accion);
+  cursor: pointer;
+}
+
+.checkbox-estandar:focus-visible,
+.radio-estandar:focus-visible {
+  outline: none;
+  box-shadow: var(--sombra-focus);
+}
+
+/* ============================================================
+   ETIQUETAS / FORMULARIOS
+   ============================================================ */
+
+.label-estandar {
+  display: block;
+  margin-bottom: 0.375rem;
+  color: var(--color-texto-suave);
+  font-size: var(--texto-xs);
+  font-weight: 600;
+}
+
+.campo-estandar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+/* ============================================================
+   ESTADOS DE FORMULARIO
+   ============================================================ */
+
+.campo-error {
+  border-color: var(--color-error) !important;
+}
+
+.campo-error:focus {
+  box-shadow: 0 0 0 3px rgba(185, 28, 28, 0.12) !important;
+}
+
+.texto-error {
+  color: var(--color-error);
+  font-size: var(--texto-xs);
+}
+
+.texto-ayuda {
+  color: var(--color-texto-tenue);
+  font-size: var(--texto-xs);
+  line-height: 1.45;
+}
+
+/* ============================================================
+   DIVISOR
+   ============================================================ */
+
+.divisor {
+  width: 100%;
+  height: 1px;
+  background: var(--color-borde);
+}
+
+/* ============================================================
+   DROPDOWN
+   ============================================================ */
+
+.dropdown-estandar {
+  position: absolute;
+  z-index: var(--z-dropdown);
+  overflow: hidden;
+  background: var(--color-superficie);
+  border: 1px solid var(--color-borde);
+  border-radius: var(--radio-md);
+  box-shadow: var(--sombra-lg);
+}
+
+.dropdown-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem 0.75rem;
+  text-align: left;
+  color: var(--color-texto);
+  background: transparent;
+  transition:
+    background var(--transicion-rapida),
+    color var(--transicion-rapida);
+}
+
+.dropdown-item:hover {
+  background: var(--color-fondo-sutil);
+}
+
+.dropdown-item.activo {
+  background: var(--color-accion-suave);
+  color: var(--color-accion);
+}
+
+/* ============================================================
+   MODAL
+   ============================================================ */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.modal-panel {
+  width: min(100%, 40rem);
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
+  background: var(--color-superficie);
+  border-radius: var(--radio-lg);
+  box-shadow: var(--sombra-xl);
+}
+
+.modal-panel-sm {
+  width: min(100%, 28rem);
+}
+
+.modal-panel-lg {
+  width: min(100%, 56rem);
+}
+
+.modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid var(--color-borde);
+}
+
+.modal-titulo {
+  color: var(--color-texto);
+  font-size: var(--texto-lg);
+  font-weight: 600;
+}
+
+.modal-descripcion {
+  margin-top: 0.25rem;
+  color: var(--color-texto-suave);
+  font-size: var(--texto-sm);
+}
+
+.modal-contenido {
+  padding: 1.5rem;
+}
+
+.modal-acciones {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 1rem 1.5rem;
+  border-top: 1px solid var(--color-borde);
+}
+
+/* ============================================================
+   TABLAS GENERALES
+   ============================================================ */
+
+.tabla-estandar {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.tabla-estandar th {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  background: var(--color-fondo-sutil);
+  color: var(--color-texto-suave);
+  font-size: var(--texto-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.tabla-estandar td {
+  padding: 0.8rem 1rem;
+  border-top: 1px solid var(--color-borde);
+  vertical-align: middle;
+}
+
+.tabla-estandar tbody tr {
+  transition: background var(--transicion-rapida);
+}
+
+.tabla-estandar tbody tr:hover {
+  background: var(--color-superficie-hover);
+}
+
+.tabla-estandar tbody tr.seleccionada {
+  background: var(--color-accion-suave);
+}
+
+/* ============================================================
+   CONTENEDOR RESPONSIVE PARA TABLAS
+   ============================================================ */
+
+.tabla-scroll {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ============================================================
+   ESTADOS DE CARGA
+   ============================================================ */
+
+.estado-cargando {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 8rem;
+  color: var(--color-texto-suave);
+}
+
+.spinner {
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid var(--color-borde);
+  border-top-color: var(--color-accion);
+  border-radius: 50%;
+  animation: spinner-giro 0.7s linear infinite;
+}
+
+@keyframes spinner-giro {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-fondo-sutil) 25%,
+    var(--color-superficie-hover) 50%,
+    var(--color-fondo-sutil) 75%
+  );
+  background-size: 200% 100%;
+  border-radius: var(--radio-sm);
+  animation: skeleton-pulso 1.4s ease-in-out infinite;
+}
+
+@keyframes skeleton-pulso {
+  0% {
+    background-position: 200% 0;
+  }
+
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+/* ============================================================
+   EMPTY STATE
+   ============================================================ */
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 12rem;
+  padding: 2rem;
+  text-align: center;
+  color: var(--color-texto-suave);
+}
+
+.empty-state-titulo {
+  color: var(--color-texto);
+  font-size: var(--texto-base);
+  font-weight: 600;
+}
+
+.empty-state-descripcion {
+  max-width: 32rem;
+  color: var(--color-texto-suave);
+  font-size: var(--texto-sm);
+}
+
+/* ============================================================
+   WHATSAPP MASIVO
+   ============================================================ */
+
+.whatsapp-icono {
+  width: 2.5rem;
+  height: 2.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: var(--radio-lg);
+  background: var(--color-accion-suave);
+  color: var(--color-accion);
+}
+
+.whatsapp-selector {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--espacio-sm);
+}
+
+.whatsapp-opcion {
+  width: 100%;
+  padding: 0.875rem 1rem;
+  text-align: left;
+  border: 1px solid var(--color-borde);
+  border-radius: var(--radio-md);
+  background: var(--color-superficie);
+  transition:
+    border-color var(--transicion-rapida),
+    background var(--transicion-rapida),
+    box-shadow var(--transicion-rapida),
+    transform var(--transicion-rapida);
+}
+
+.whatsapp-opcion:hover {
+  background: var(--color-superficie-hover);
+  border-color: var(--color-borde-fuerte);
+}
+
+.whatsapp-opcion:focus-visible {
+  outline: none;
+  box-shadow: var(--sombra-focus);
+}
+
+.whatsapp-opcion.activa {
+  border-color: var(--color-accion);
+  background: var(--color-accion-suave);
+  box-shadow: var(--sombra-sm);
+}
+
+.whatsapp-opcion-titulo {
+  font-weight: 600;
+  color: var(--color-texto);
+}
+
+.whatsapp-opcion-descripcion {
+  margin-top: 0.25rem;
+  font-size: var(--texto-xs);
+  color: var(--color-texto-suave);
+  line-height: 1.4;
+}
+
+.whatsapp-configuracion {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: var(--espacio-md);
+}
+
+.whatsapp-campo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.whatsapp-label {
+  font-size: var(--texto-xs);
+  font-weight: 600;
+  color: var(--color-texto-suave);
+}
+
+.whatsapp-select {
+  width: 100%;
+  min-height: 2.5rem;
+  padding: 0.5rem 2.25rem 0.5rem 0.75rem;
+  border: 1px solid var(--color-borde);
+  border-radius: var(--radio-md);
+  background: var(--color-fondo-sutil);
+  color: var(--color-texto);
+  font-size: var(--texto-sm);
+  transition:
+    border-color var(--transicion-rapida),
+    box-shadow var(--transicion-rapida),
+    background var(--transicion-rapida);
+}
+
+.whatsapp-select:hover:not(:disabled) {
+  border-color: var(--color-borde-fuerte);
+  background: var(--color-superficie);
+}
+
+.whatsapp-select:focus {
+  outline: none;
+  border-color: var(--color-accion);
+  box-shadow: var(--sombra-focus);
+  background: var(--color-superficie);
+}
+
+.whatsapp-select:focus-visible {
+  outline: none;
+}
+
+.whatsapp-select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.whatsapp-tabla {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.whatsapp-tabla th {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  background: var(--color-fondo-sutil);
+  color: var(--color-texto-suave);
+  font-size: var(--texto-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.whatsapp-tabla td {
+  padding: 0.85rem 1rem;
+  border-top: 1px solid var(--color-borde);
+  vertical-align: middle;
+}
+
+.whatsapp-tabla tbody tr {
+  transition: background var(--transicion-rapida);
+}
+
+.whatsapp-tabla tbody tr:hover {
+  background: var(--color-superficie-hover);
+}
+
+.whatsapp-tabla tr.seleccionada {
+  background: var(--color-accion-suave);
+}
+
+.whatsapp-vista-previa {
+  padding: var(--espacio-lg);
+  border-radius: var(--radio-lg);
+  background: var(--color-fondo-sutil);
+  border: 1px solid var(--color-borde);
+}
+
+.whatsapp-mensaje {
+  max-width: 48rem;
+  margin-left: auto;
+  padding: var(--espacio-md);
+  border-radius: var(--radio-lg);
+  border-bottom-right-radius: var(--radio-sm);
+  background: var(--color-accion-suave);
+  color: var(--color-texto);
+  line-height: 1.6;
+}
+
+/* Buscador exclusivo de WhatsApp */
+.whatsapp-buscador {
+  width: 100%;
+  min-height: 2.5rem;
+  padding: 0.5rem 0.75rem 0.5rem 2.75rem;
+  background: var(--color-fondo-sutil);
+  border: 1px solid transparent;
+  border-radius: var(--radio-md);
+  color: var(--color-texto);
+  font-size: var(--texto-sm);
+  transition:
+    box-shadow var(--transicion-rapida),
+    border-color var(--transicion-rapida),
+    background var(--transicion-rapida);
+}
+
+.whatsapp-buscador::placeholder {
+  color: var(--color-texto-tenue);
+}
+
+.whatsapp-buscador:hover {
+  border-color: var(--color-borde);
+  background: var(--color-superficie);
+}
+
+.whatsapp-buscador:focus {
+  outline: none;
+  border-color: var(--color-accion);
+  box-shadow: var(--sombra-focus);
+  background: var(--color-superficie);
+}
+
+.whatsapp-buscador:focus-visible {
+  outline: none;
+}
+
+/* ============================================================
+   WHATSAPP — TABLA RESPONSIVE
+   ============================================================ */
+
+.whatsapp-col-check {
+  width: 44px;
+}
+
+.whatsapp-col-cliente {
+  width: 220px;
+  max-width: 220px;
+}
+
+.whatsapp-col-segmentacion {
+  width: 175px;
+}
+
+.whatsapp-col-fecha {
+  width: 150px;
+}
+
+.whatsapp-col-historico {
+  width: 150px;
+}
+
+.whatsapp-col-destino {
+  width: 235px;
+}
+
+.whatsapp-col-mensaje {
+  width: 120px;
+}
+
+.whatsapp-select-compact {
+  min-width: 0;
+  min-height: 2.25rem;
+  padding-top: 0.375rem;
+  padding-bottom: 0.375rem;
+}
+
+/* ============================================================
+   RESPONSIVE — WHATSAPP
+   ============================================================ */
+
+@media (max-width: 1200px) {
+  .whatsapp-col-cliente {
+    width: 200px;
+    max-width: 200px;
+  }
+
+  .whatsapp-col-destino {
+    width: 210px;
+  }
+}
+
+@media (max-width: 900px) {
+  .whatsapp-selector {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .whatsapp-configuracion {
+    grid-template-columns: 1fr;
+  }
+
+  .whatsapp-col-fecha,
+  .whatsapp-col-historico {
+    display: none;
+  }
+
+  .whatsapp-col-cliente {
+    width: 220px;
+    max-width: 220px;
+  }
+
+  .whatsapp-col-destino {
+    width: 210px;
+  }
+}
+
+@media (max-width: 640px) {
+  .whatsapp-selector {
+    grid-template-columns: 1fr;
+  }
+
+  .whatsapp-col-segmentacion {
+    display: none;
+  }
+
+  .whatsapp-col-cliente {
+    width: 190px;
+    max-width: 190px;
+  }
+
+  .whatsapp-col-destino {
+    width: 190px;
+  }
+
+  .whatsapp-col-mensaje {
+    width: 100px;
+  }
+}
+
+/* ============================================================
+   RESPONSIVE — MODAL
+   ============================================================ */
+
+@media (max-width: 640px) {
+  .modal-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .modal-panel,
+  .modal-panel-sm,
+  .modal-panel-lg {
+    width: 100%;
+    max-width: none;
+    max-height: 92vh;
+    border-radius: var(--radio-lg) var(--radio-lg) 0 0;
+  }
+
+  .modal-header {
+    padding: 1rem;
+  }
+
+  .modal-contenido {
+    padding: 1rem;
+  }
+
+  .modal-acciones {
+    padding: 1rem;
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+
+  .modal-acciones > * {
+    width: 100%;
+  }
+}
+
+/* ============================================================
+   RESPONSIVE — CONTROLES
+   ============================================================ */
+
+@media (max-width: 640px) {
+  .boton-primario,
+  .boton-secundario,
+  .boton-terciario,
+  .boton-peligro {
+    min-height: 2.625rem;
+  }
+
+  .tabla-scroll {
+    margin-right: -1rem;
+    margin-left: -1rem;
+    width: calc(100% + 2rem);
+  }
+}
+
+/* ============================================================
+   ACCESIBILIDAD
+   ============================================================ */
+
+:focus-visible {
+  outline: 2px solid var(--color-accion);
+  outline-offset: 2px;
+}
+
+.input-estandar:focus-visible,
+.select-estandar:focus-visible,
+.textarea-estandar:focus-visible,
+.whatsapp-select:focus-visible,
+.whatsapp-buscador:focus-visible {
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ============================================================
+   SAFE AREA — DISPOSITIVOS MÓVILES
+   ============================================================ */
+
+@supports (padding: env(safe-area-inset-bottom)) {
+  .safe-area-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .safe-area-top {
+    padding-top: env(safe-area-inset-top);
+  }
+}

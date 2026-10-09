@@ -1,0 +1,2 @@
+# El entrypoint se ejecuta en Linux, incluso al clonar desde Windows.
+docker/*.sh text eol=lf

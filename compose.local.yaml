@@ -1,0 +1,31 @@
+# Añade una BD propia de Docker. Nunca publica el puerto 5432 del contenedor.
+services:
+  app:
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://gestion:${DOCKER_POSTGRES_PASSWORD:?Define DOCKER_POSTGRES_PASSWORD en .env.docker}@db:5432/gestion_oficina_docker
+      ENABLE_BROWSER_DESKTOP: "1"
+      BROWSER_DESKTOP_PASSWORD: ${BROWSER_DESKTOP_PASSWORD:?Define BROWSER_DESKTOP_PASSWORD en .env.docker}
+    ports:
+      - "127.0.0.1:${BROWSER_DESKTOP_PORT:-6080}:6080"
+
+  db:
+    image: postgres:18-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: gestion_oficina_docker
+      POSTGRES_USER: gestion
+      POSTGRES_PASSWORD: ${DOCKER_POSTGRES_PASSWORD:?Define DOCKER_POSTGRES_PASSWORD en .env.docker}
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gestion -d gestion_oficina_docker"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    stop_grace_period: 30s
+
+volumes:
+  postgres_data:

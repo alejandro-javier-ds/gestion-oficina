@@ -1,0 +1,30 @@
+name: gestion-oficina-docker
+
+services:
+  app:
+    image: ${APP_IMAGE:-gestion-oficina:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-}
+      JWT_SECRET: ${JWT_SECRET:-}
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+      ENABLE_BROWSER_DESKTOP: "0"
+    ports:
+      - "127.0.0.1:${APP_PORT:-3001}:3000"
+    volumes:
+      - backups:/app/backups
+      - whatsapp_sessions:/app/whatsapp-sessions
+      - whatsapp_legacy_sessions:/app/.whatsapp-sesiones
+    shm_size: 1gb
+    stop_grace_period: 30s
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  backups:
+  whatsapp_sessions:
+  whatsapp_legacy_sessions:
