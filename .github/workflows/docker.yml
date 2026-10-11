@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write # Requerido para el inicio de sesión federado con Azure
 
 concurrency:
   group: docker-${{ github.workflow }}-${{ github.ref }}
@@ -47,3 +48,58 @@ jobs:
             command -v Xvfb
             pg_dump --version
           '
+
+      # Solo se publica desde main; pull requests y otras ramas siguen siendo pruebas.
+      - name: Iniciar sesión en Azure con OIDC
+        if: >-
+          github.repository == 'alejandro-javier-ds/gestion-oficina' &&
+          github.ref == 'refs/heads/main' &&
+          (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        uses: azure/login@v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # AcrPush concede acceso a imágenes, sin permisos para administrar el registro.
+      # Intercambiamos el token de Entra por uno de ACR sin utilizar az acr login.
+      - name: Autenticar Docker en Azure Container Registry
+        if: >-
+          github.repository == 'alejandro-javier-ds/gestion-oficina' &&
+          github.ref == 'refs/heads/main' &&
+          (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        shell: bash
+        env:
+          ACR_LOGIN_SERVER: acrgestionescaillaux-hwg9a5hvg7f6bxeu.azurecr.io
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+        run: |
+          AAD_ACCESS_TOKEN="$(az account get-access-token --resource https://containerregistry.azure.net --query accessToken -o tsv)"
+          ACR_REFRESH_TOKEN="$(
+            curl --fail --silent --show-error \
+              --request POST \
+              --url "https://${ACR_LOGIN_SERVER}/oauth2/exchange" \
+              --data-urlencode "grant_type=access_token" \
+              --data-urlencode "service=${ACR_LOGIN_SERVER}" \
+              --data-urlencode "tenant=${AZURE_TENANT_ID}" \
+              --data-urlencode "access_token=${AAD_ACCESS_TOKEN}" |
+            jq -er '.refresh_token'
+          )"
+          echo "::add-mask::$ACR_REFRESH_TOKEN"
+          printf "%s" "$ACR_REFRESH_TOKEN" | docker login "$ACR_LOGIN_SERVER" \
+            --username 00000000-0000-0000-0000-000000000000 --password-stdin
+          unset AAD_ACCESS_TOKEN ACR_REFRESH_TOKEN
+
+      - name: Publicar imagen verificada en ACR
+        if: >-
+          github.repository == 'alejandro-javier-ds/gestion-oficina' &&
+          github.ref == 'refs/heads/main' &&
+          (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        shell: bash
+        env:
+          ACR_LOGIN_SERVER: acrgestionescaillaux-hwg9a5hvg7f6bxeu.azurecr.io
+        run: |
+          IMAGE="${ACR_LOGIN_SERVER}/gestion-oficina"
+          docker tag gestion-oficina:ci "${IMAGE}:${GITHUB_SHA}"
+          docker push "${IMAGE}:${GITHUB_SHA}"
+          docker tag gestion-oficina:ci "${IMAGE}:latest"
+          docker push "${IMAGE}:latest"
