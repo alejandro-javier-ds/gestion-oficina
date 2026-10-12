@@ -49,7 +49,7 @@ jobs:
             pg_dump --version
           '
 
-      # Solo se publica desde main; pull requests y otras ramas siguen siendo pruebas.
+      # Desde main se publica en ACR la imagen verificada; los pull requests y otras ramas solo ejecutan las comprobaciones.
       - name: Iniciar sesión en Azure con OIDC
         if: >-
           github.repository == 'alejandro-javier-ds/gestion-oficina' &&
