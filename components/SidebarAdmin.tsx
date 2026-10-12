@@ -6,6 +6,7 @@
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
+import { useInvalidarSesion, useSesion } from "@/components/SesionProvider";
 
 import {
   LayoutDashboard,
@@ -114,10 +115,8 @@ export default function SidebarAdmin() {
   const [colapsado, setColapsado] = useState(false);
   const [abiertoMovil, setAbiertoMovil] = useState(false);
 
-  const [sesion, setSesion] = useState<{
-    nombreCompleto: string;
-    rol: string;
-  } | null>(null);
+  const { sesion } = useSesion();
+  const invalidarSesion = useInvalidarSesion();
 
   useEffect(() => {
     function sincronizarResponsive() {
@@ -143,15 +142,6 @@ export default function SidebarAdmin() {
   }, []);
 
   useEffect(() => {
-    fetch("/api/sesion")
-      .then((res) => res.json())
-      .then((data) => setSesion(data.sesion ?? null))
-      .catch(() => {
-        setSesion(null);
-      });
-  }, []);
-
-  useEffect(() => {
     setAbiertoMovil(false);
   }, [pathname]);
 
@@ -160,6 +150,7 @@ export default function SidebarAdmin() {
       method: "POST",
     });
 
+    invalidarSesion();
     router.push("/login");
     router.refresh();
   }

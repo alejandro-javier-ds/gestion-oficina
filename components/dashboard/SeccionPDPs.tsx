@@ -6,6 +6,7 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Search, Pencil, Trash2 } from "lucide-react";
+import { useSesion } from "@/components/SesionProvider";
 import GraficoPie from "./GraficoPie";
 import { normalizarMoneda } from "@/lib/monedas";
 import TablaDinamica from "./TablaDinamica";
@@ -481,20 +482,11 @@ export default function SeccionPDPs() {
   const [rango, setRango] = useState<RangoFecha>(rangoInicial());
   const [datos, setDatos] = useState<DatosPDPs | null>(null);
   const [cargando, setCargando] = useState(true);
-  const [rolPermitido, setRolPermitido] = useState(false);
+  const { sesion } = useSesion();
+  const rolPermitido =
+    sesion?.rol === "administrador" || sesion?.rol === "supervisor";
   const [promesaEditando, setPromesaEditando] =
     useState<PromesaParaEditar | null>(null);
-
-  useEffect(() => {
-    fetch("/api/sesion")
-      .then((res) => res.json())
-      .then((data) =>
-        setRolPermitido(
-          data.sesion?.rol === "administrador" ||
-            data.sesion?.rol === "supervisor",
-        ),
-      );
-  }, []);
 
   function cargarDatos() {
     setCargando(true);

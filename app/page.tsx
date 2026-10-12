@@ -18,6 +18,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useSesion } from "@/components/SesionProvider";
 import { AnimatePresence, motion } from "framer-motion";
 
 import {
@@ -45,11 +46,6 @@ type ResultadoCliente = {
   montoDeudaTotal: number;
   primeraCuenta: string;
   segmentacion: string | null;
-};
-
-type Sesion = {
-  nombreCompleto: string;
-  rol: "administrador" | "supervisor" | "abogado" | "gestor";
 };
 
 type PestanaCliente = {
@@ -164,9 +160,7 @@ export default function Home() {
 
   const [filtroLista, setFiltroLista] = useState("");
 
-  const [sesion, setSesion] = useState<Sesion | null>(null);
-
-  const [verificandoRol, setVerificandoRol] = useState(true);
+  const { sesion, cargando: verificandoRol } = useSesion();
 
   const [pestanas, setPestanas] = useState<PestanaCliente[]>([]);
 
@@ -175,41 +169,43 @@ export default function Home() {
   const [pestanasCargadas, setPestanasCargadas] = useState(false);
 
   useEffect(() => {
-    fetch("/api/sesion")
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.sesion && ROLES_CON_PANEL_ADMIN.includes(data.sesion.rol)) {
-          router.replace("/admin");
-          return;
-        }
+    if (verificandoRol) return;
 
-        setSesion(data.sesion);
-        setVerificandoRol(false);
+    if (sesion && ROLES_CON_PANEL_ADMIN.includes(sesion.rol)) {
+      router.replace("/admin");
+      return;
+    }
 
-        const guardada = sessionStorage.getItem(CLAVE_ULTIMA_BUSQUEDA);
+    let activa = true;
 
-        if (guardada) {
-          const { texto, resultados } = JSON.parse(guardada);
+    void Promise.resolve().then(() => {
+      if (!activa) return;
 
-          setUltimaBusqueda(texto);
-          setCuentas(resultados);
-        }
+      const guardada = sessionStorage.getItem(CLAVE_ULTIMA_BUSQUEDA);
 
-        const pestanasGuardadas = sessionStorage.getItem(CLAVE_PESTANAS);
+      if (guardada) {
+        const { texto, resultados } = JSON.parse(guardada);
 
-        if (pestanasGuardadas) {
-          const { pestanas: p, activa } = JSON.parse(pestanasGuardadas);
+        setUltimaBusqueda(texto);
+        setCuentas(resultados);
+      }
 
-          setPestanas(p ?? []);
-          setPestanaActiva(activa ?? "cuentas");
-        }
+      const pestanasGuardadas = sessionStorage.getItem(CLAVE_PESTANAS);
 
-        setPestanasCargadas(true);
-      })
-      .catch(() => {
-        setVerificandoRol(false);
-      });
-  }, [router]);
+      if (pestanasGuardadas) {
+        const { pestanas: p, activa } = JSON.parse(pestanasGuardadas);
+
+        setPestanas(p ?? []);
+        setPestanaActiva(activa ?? "cuentas");
+      }
+
+      setPestanasCargadas(true);
+    });
+
+    return () => {
+      activa = false;
+    };
+  }, [router, sesion, verificandoRol]);
 
   useEffect(() => {
     if (!pestanasCargadas) {

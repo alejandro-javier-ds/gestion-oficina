@@ -3,9 +3,9 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Pencil, Trash2 } from "lucide-react";
+import { useSesion } from "@/components/SesionProvider";
 
 type FilaFeed = {
   id: number;
@@ -47,18 +47,9 @@ export default function FeedActividadReciente({
   onEditar?: (f: FilaFeed) => void;
   onEliminar?: (f: FilaFeed) => void;
 }) {
-  const [rolPermitido, setRolPermitido] = useState(false);
-
-  useEffect(() => {
-    fetch("/api/sesion")
-      .then((res) => res.json())
-      .then((data) =>
-        setRolPermitido(
-          data.sesion?.rol === "administrador" ||
-            data.sesion?.rol === "supervisor",
-        ),
-      );
-  }, []);
+  const { sesion } = useSesion();
+  const rolPermitido =
+    sesion?.rol === "administrador" || sesion?.rol === "supervisor";
 
   return (
     <div className="tarjeta p-4 sm:p-5">

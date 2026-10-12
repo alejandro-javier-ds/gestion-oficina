@@ -38,11 +38,19 @@ type FilaCompleta = {
 
 type TotalResultado = {
   total: number;
+  hoy: number;
+};
+
+type UltimaExportacion = {
+  fecha_hora: string;
+  usuario: string;
 };
 
 export async function GET() {
-  const muestra = await consultarFilas<FilaCompleta>(
-    `
+  const hoy = new Date().toISOString().slice(0, 10);
+
+  const [muestra, resumen, ultimaExportacion] = await Promise.all([
+    consultarFilas<FilaCompleta>(`
       SELECT
         g.fecha_hora,
         c.gestor AS gestor,
@@ -102,13 +110,13 @@ export async function GET() {
         g.fecha_hora DESC
 
       LIMIT 15
-    `,
-  );
-
-  const totalGestiones = await consultarUno<TotalResultado>(
-    `
+    `),
+    consultarUno<TotalResultado>(`
       SELECT
-        COUNT(*)::int AS total
+        COUNT(*)::int AS total,
+        COUNT(*) FILTER (
+          WHERE LEFT(fecha_hora::text, 10) = $1
+        )::int AS hoy
 
       FROM gestiones
 
@@ -117,38 +125,27 @@ export async function GET() {
         OR
         categoria <> 'PDP'
       )
-    `,
-  );
-
-  const hoy = new Date().toISOString().slice(0, 10);
-
-  const gestionesHoy = await consultarUno<TotalResultado>(
-    `
+    `, [hoy]),
+    consultarUno<UltimaExportacion>(`
       SELECT
-        COUNT(*)::int AS total
+        fecha_hora,
+        usuario
 
-      FROM gestiones
+      FROM exportaciones
 
-      WHERE
-        LEFT(
-          fecha_hora::text,
-          10
-        ) = $1
-
-        AND (
-          categoria IS NULL
-          OR
-          categoria <> 'PDP'
-        )
-    `,
-    [hoy],
-  );
+      ORDER BY fecha_hora DESC
+      LIMIT 1
+    `),
+  ]);
 
   return NextResponse.json({
     muestra,
-
-    totalGestiones: totalGestiones?.total ?? 0,
-
-    gestionesHoy: gestionesHoy?.total ?? 0,
+    totalGestiones: resumen?.total ?? 0,
+    gestionesHoy: resumen?.hoy ?? 0,
+    ultimaExportacion: ultimaExportacion ?? null,
+  }, {
+    headers: {
+      "Cache-Control": "private, no-store, max-age=0",
+    },
   });
 }

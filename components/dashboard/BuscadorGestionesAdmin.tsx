@@ -3,9 +3,10 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Search, Pencil, Trash2 } from "lucide-react";
+import { useSesion } from "@/components/SesionProvider";
 import ModalEditarGestion, { GestionParaEditar } from "../ModalEditarGestion";
 
 type Resultado = {
@@ -41,24 +42,16 @@ function formatearFecha(iso: string): string {
 }
 
 export default function BuscadorGestionesAdmin() {
-  const [rolPermitido, setRolPermitido] = useState<boolean | null>(null);
+  const { sesion, cargando } = useSesion();
+  const rolPermitido = cargando
+    ? null
+    : sesion?.rol === "administrador" || sesion?.rol === "supervisor";
   const [texto, setTexto] = useState("");
   const [resultados, setResultados] = useState<Resultado[]>([]);
   const [buscando, setBuscando] = useState(false);
   const [buscoAlgunaVez, setBuscoAlgunaVez] = useState(false);
   const [gestionEditando, setGestionEditando] =
     useState<GestionParaEditar | null>(null);
-
-  useEffect(() => {
-    fetch("/api/sesion")
-      .then((res) => res.json())
-      .then((data) =>
-        setRolPermitido(
-          data.sesion?.rol === "administrador" ||
-            data.sesion?.rol === "supervisor",
-        ),
-      );
-  }, []);
 
   async function buscar(q: string) {
     setTexto(q);

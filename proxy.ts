@@ -17,6 +17,7 @@ import {
   crearSesion,
   verificarSesionToken,
   NOMBRE_COOKIE,
+  CABECERA_SESION_VERIFICADA,
   DURACION_SESION_MINUTOS,
 } from "@/lib/auth";
 
@@ -49,7 +50,7 @@ function esApi(pathname: string): boolean {
 }
 
 function respuestaApiNoAutenticado() {
-  return NextResponse.json(
+  const respuesta = NextResponse.json(
     {
       error: "No autenticado.",
     },
@@ -57,10 +58,12 @@ function respuestaApiNoAutenticado() {
       status: 401,
     },
   );
+  respuesta.headers.set("Cache-Control", "private, no-store, max-age=0");
+  return respuesta;
 }
 
 function respuestaApiSinPermiso() {
-  return NextResponse.json(
+  const respuesta = NextResponse.json(
     {
       error: "No tienes permiso para acceder a este recurso.",
     },
@@ -68,6 +71,8 @@ function respuestaApiSinPermiso() {
       status: 403,
     },
   );
+  respuesta.headers.set("Cache-Control", "private, no-store, max-age=0");
+  return respuesta;
 }
 
 function respuestaSinSesion(request: NextRequest) {
@@ -82,13 +87,21 @@ export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   const peticionApi = esApi(pathname);
+  const encabezadosSolicitud = new Headers(request.headers);
+  encabezadosSolicitud.delete(CABECERA_SESION_VERIFICADA);
 
   const esRutaPublica = RUTAS_PUBLICAS.some((ruta) =>
     pathname.startsWith(ruta),
   );
 
   if (esRutaPublica) {
-    return NextResponse.next();
+    const respuesta = NextResponse.next({
+      request: { headers: encabezadosSolicitud },
+    });
+    if (peticionApi) {
+      respuesta.headers.set("Cache-Control", "private, no-store, max-age=0");
+    }
+    return respuesta;
   }
 
   const token = request.cookies.get(NOMBRE_COOKIE)?.value;
@@ -114,6 +127,7 @@ export async function proxy(request: NextRequest) {
           },
           {
             status: 403,
+            headers: { "Cache-Control": "private, no-store, max-age=0" },
           },
         );
       }
@@ -153,7 +167,15 @@ export async function proxy(request: NextRequest) {
 
     const tokenRenovado = await crearSesion(sesion);
 
-    const respuesta = NextResponse.next();
+    encabezadosSolicitud.set(CABECERA_SESION_VERIFICADA, tokenRenovado);
+
+    const respuesta = NextResponse.next({
+      request: { headers: encabezadosSolicitud },
+    });
+
+    if (peticionApi) {
+      respuesta.headers.set("Cache-Control", "private, no-store, max-age=0");
+    }
 
     respuesta.cookies.set(NOMBRE_COOKIE, tokenRenovado, {
       httpOnly: true,

@@ -32,5 +32,9 @@ export async function GET() {
 
   return NextResponse.json({
     ultima: ultima ?? null,
+  }, {
+    headers: {
+      "Cache-Control": "private, no-store, max-age=0",
+    },
   });
 }

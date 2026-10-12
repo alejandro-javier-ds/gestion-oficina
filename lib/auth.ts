@@ -4,7 +4,7 @@
 
 import bcrypt from "bcryptjs";
 import { SignJWT, jwtVerify } from "jose";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 
 if (!process.env.JWT_SECRET) {
   throw new Error(
@@ -15,6 +15,7 @@ if (!process.env.JWT_SECRET) {
 const CLAVE_SECRETA = new TextEncoder().encode(process.env.JWT_SECRET);
 
 export const NOMBRE_COOKIE = "sesion_gestion_oficina";
+export const CABECERA_SESION_VERIFICADA = "x-gestion-sesion-verificada";
 export const DURACION_SESION_MINUTOS = 20;
 
 export type Rol = "administrador" | "supervisor" | "abogado" | "gestor";
@@ -128,7 +129,61 @@ export async function verificarSesionToken(
   }
 }
 
+async function leerSesionFirmada(token: string): Promise<DatosSesion | null> {
+  try {
+    const { payload } = await jwtVerify(token, CLAVE_SECRETA, {
+      algorithms: ["HS256"],
+    });
+
+    const rolesValidos: Rol[] = [
+      "administrador",
+      "supervisor",
+      "abogado",
+      "gestor",
+    ];
+
+    if (
+      !Number.isSafeInteger(payload.userId) ||
+      Number(payload.userId) <= 0 ||
+      typeof payload.username !== "string" ||
+      !payload.username ||
+      typeof payload.nombreCompleto !== "string" ||
+      !rolesValidos.includes(payload.rol as Rol) ||
+      (payload.gestor !== null && typeof payload.gestor !== "string") ||
+      typeof payload.debeCambiarContrasena !== "boolean"
+    ) {
+      return null;
+    }
+
+    return {
+      userId: Number(payload.userId),
+      username: payload.username,
+      nombreCompleto: payload.nombreCompleto,
+      gestor: payload.gestor as string | null,
+      rol: payload.rol as Rol,
+      debeCambiarContrasena: payload.debeCambiarContrasena,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function leerSesionActual(): Promise<DatosSesion | null> {
+  let tokenVerificadoPorProxy: string | null = null;
+
+  try {
+    tokenVerificadoPorProxy = (await headers()).get(
+      CABECERA_SESION_VERIFICADA,
+    );
+  } catch {
+    // Fuera de una petición Next.js se conserva la lectura tradicional de cookie.
+  }
+
+  if (tokenVerificadoPorProxy) {
+    const sesionVerificada = await leerSesionFirmada(tokenVerificadoPorProxy);
+    if (sesionVerificada) return sesionVerificada;
+  }
+
   const almacenCookies = await cookies();
   const token = almacenCookies.get(NOMBRE_COOKIE)?.value;
   return token ? verificarSesionToken(token) : null;

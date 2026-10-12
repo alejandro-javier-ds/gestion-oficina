@@ -3,6 +3,7 @@
 
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
+import SesionProvider from "@/components/SesionProvider";
 import "./globals.css";
 
 const inter = Inter({
@@ -34,7 +35,7 @@ export default function RootLayout({
         className={`${inter.variable} ${jetbrainsMono.variable} min-h-full flex flex-col antialiased`}
         suppressHydrationWarning
       >
-        {children}
+        <SesionProvider>{children}</SesionProvider>
       </body>
     </html>
   );

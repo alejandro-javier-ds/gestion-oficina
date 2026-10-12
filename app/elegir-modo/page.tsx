@@ -6,36 +6,25 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Users, LayoutDashboard } from "lucide-react";
-
-type Sesion = {
-  nombreCompleto: string;
-  rol: "administrador" | "supervisor" | "abogado" | "gestor";
-};
+import { useSesion } from "@/components/SesionProvider";
 
 export default function ElegirModoPage() {
   const router = useRouter();
-  const [sesion, setSesion] = useState<Sesion | null>(null);
-  const [verificando, setVerificando] = useState(true);
+  const { sesion, cargando: verificando } = useSesion();
 
   useEffect(() => {
-    fetch("/api/sesion")
-      .then((res) => res.json())
-      .then((data) => {
-        if (!data.sesion) {
-          router.replace("/login");
-          return;
-        }
-        if (data.sesion.rol !== "supervisor") {
-          router.replace(data.sesion.rol === "gestor" ? "/" : "/admin");
-          return;
-        }
-        setSesion(data.sesion);
-        setVerificando(false);
-      });
-  }, [router]);
+    if (verificando) return;
+    if (!sesion) {
+      router.replace("/login");
+      return;
+    }
+    if (sesion.rol !== "supervisor") {
+      router.replace(sesion.rol === "gestor" ? "/" : "/admin");
+    }
+  }, [router, sesion, verificando]);
 
   if (verificando || !sesion) {
     return null;

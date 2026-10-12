@@ -169,25 +169,25 @@ export default function ExportarAdminPage() {
 
   function cargarVistaPrevia() {
     setCargando(true);
-    fetch("/api/exportar/vista-previa")
+    fetch("/api/exportar/vista-previa", { cache: "no-store" })
       .then((res) => res.json())
       .then((data) => {
         setMuestra(data.muestra ?? []);
         setTotalGestiones(data.totalGestiones ?? 0);
         setGestionesHoy(data.gestionesHoy ?? 0);
+        setUltimaExportacion(data.ultimaExportacion ?? null);
       })
       .finally(() => setCargando(false));
   }
 
   function cargarUltimaExportacion() {
-    fetch("/api/exportar/ultima")
+    fetch("/api/exportar/ultima", { cache: "no-store" })
       .then((res) => res.json())
       .then((data) => setUltimaExportacion(data.ultima ?? null));
   }
 
   useEffect(() => {
     cargarVistaPrevia();
-    cargarUltimaExportacion();
   }, []);
 
   function exportarExcel() {

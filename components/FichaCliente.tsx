@@ -6,6 +6,7 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { RotateCw, ChevronRight, CreditCard, Landmark, X } from "lucide-react";
+import { useSesion } from "@/components/SesionProvider";
 
 import HeaderCliente from "@/components/HeaderCliente";
 import HistorialTabs from "@/components/HistorialTabs";
@@ -71,11 +72,6 @@ type DatosCliente = {
   cic: string | null;
   apersonamiento: Apersonamiento[];
   historialRouter: HistorialRouter[];
-};
-
-type Sesion = {
-  nombreCompleto: string;
-  rol: "administrador" | "supervisor" | "abogado" | "gestor";
 };
 
 type TabPrincipal =
@@ -551,7 +547,7 @@ export default function FichaCliente({
   onNombreCliente?: (nombre: string) => void;
 }) {
   const [datos, setDatos] = useState<DatosCliente | null>(null);
-  const [sesion, setSesion] = useState<Sesion | null>(null);
+  const { sesion } = useSesion();
   const [cargando, setCargando] = useState(true);
   const [errorAcceso, setErrorAcceso] = useState<string | null>(null);
 
@@ -567,13 +563,6 @@ export default function FichaCliente({
   const [pestanaAnidadaActiva, setPestanaAnidadaActiva] = useState<
     string | null
   >(null);
-
-  useEffect(() => {
-    fetch("/api/sesion")
-      .then((res) => res.json())
-      .then((data) => setSesion(data.sesion ?? null))
-      .catch(() => setSesion(null));
-  }, []);
 
   async function cargarDatos() {
     setCargando(true);

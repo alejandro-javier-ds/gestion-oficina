@@ -6,10 +6,12 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { useInvalidarSesion } from "@/components/SesionProvider";
 import { Eye, EyeOff } from "lucide-react";
 
 export default function LoginPage() {
   const router = useRouter();
+  const invalidarSesion = useInvalidarSesion();
   const [username, setUsername] = useState("");
   const [contrasena, setContrasena] = useState("");
   const [mostrarContrasena, setMostrarContrasena] = useState(false);
@@ -36,6 +38,7 @@ export default function LoginPage() {
 
     const data = await res.json();
     setCargando(false);
+    invalidarSesion();
 
     if (data.rol === "administrador" || data.rol === "abogado") {
       router.push("/admin");
