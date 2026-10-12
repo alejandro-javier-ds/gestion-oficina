@@ -9,6 +9,8 @@ import fs from "fs";
 import path from "path";
 import { execFile } from "child_process";
 import { promisify } from "util";
+import { randomUUID } from "node:crypto";
+import { copiarRespaldoABlob } from "./backup-blob";
 
 const ejecutarArchivo = promisify(execFile);
 
@@ -135,7 +137,7 @@ export async function crearRespaldoBaseDatos(): Promise<{
   const { host, puerto, usuario, password, baseDatos, sslMode } =
     obtenerConfiguracionPostgres();
 
-  const nombreArchivo = `gestion-oficina_${formatearFechaParaNombre()}.dump`;
+  const nombreArchivo = `gestion-oficina_${formatearFechaParaNombre()}_${randomUUID()}.dump`;
 
   const rutaDestino = path.join(CARPETA_RESPALDOS, nombreArchivo);
 
@@ -212,6 +214,24 @@ export async function crearRespaldoBaseDatos(): Promise<{
     fs.unlinkSync(rutaDestino);
 
     throw new Error("pg_dump generó un respaldo vacío.");
+  }
+
+  try {
+    const resultado = await copiarRespaldoABlob(rutaDestino);
+    console.log(`[backup Blob] ${nombreArchivo}: ${resultado}.`);
+  } catch (error) {
+    const datos = error as { code?: unknown; statusCode?: unknown } | null;
+    const codigoError = datos?.code ?? (error instanceof Error ? error.name : undefined);
+    const codigo =
+      typeof codigoError === "string" && /^[a-zA-Z0-9_]{1,80}$/.test(codigoError)
+        ? codigoError
+        : "BlobUploadFailed";
+    const estadoHttp =
+      typeof datos?.statusCode === "number" ? datos.statusCode : undefined;
+    console.error(
+      `[backup Blob] No se pudo copiar ${nombreArchivo}; el respaldo local se conserva.`,
+      { codigo, estadoHttp },
+    );
   }
 
   rotarRespaldosViejos();

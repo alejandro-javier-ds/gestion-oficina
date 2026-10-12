@@ -220,6 +220,34 @@ de Lima**, mientras el proceso de la aplicación esté en ejecución. Los volúm
 de Compose conservan la base, los respaldos y las sesiones al recrear el
 contenedor; consulta [persistencia y operación](DOCKER.md#persistencia-y-operación).
 
+En Azure Container Apps, cada respaldo manual o programado también se copia a
+`stgestionescaillaux`, dentro del contenedor privado `backups-postgresql`. El
+archivo original permanece en `/app/backups` sobre Azure Files y se mantiene la
+rotación local de los últimos 30 respaldos. La aplicación no elimina copias de
+Blob Storage ni carga automáticamente los respaldos anteriores a este cambio.
+
+La copia utiliza la identidad administrada del sistema del Container App con
+el rol **Storage Blob Data Contributor**, sin claves de almacenamiento ni SAS.
+Si se usa una identidad administrada asignada por el usuario, `AZURE_CLIENT_ID`
+debe contener su identificador de cliente; no es una clave ni una contraseña.
+Azure proporciona `IDENTITY_ENDPOINT` e `IDENTITY_HEADER`; no se deben guardar
+en Git ni configurarlos manualmente. Este flujo sigue la
+[autenticación con identidad administrada de Container Apps](https://learn.microsoft.com/en-us/azure/container-apps/managed-identity).
+
+Cada archivo tiene un nombre único. La carga comprueba tamaño y huella SHA-256
+para reconocer copias existentes, y usa una condición de creación para impedir
+sobrescrituras y duplicados al reintentar. Las llamadas simultáneas para un mismo
+archivo comparten la carga en curso. El SDK reintenta fallos transitorios; las
+operaciones de copia reciben una señal de cancelación a los dos minutos y cada
+petición al servicio de identidad tiene un límite de diez segundos.
+
+Si la identidad o Blob Storage fallan, el respaldo sigue disponible en el panel
+y se registra `[backup Blob]` con el nombre, el código de error y el estado HTTP
+cuando existe. No se registran tokens ni credenciales. Fuera de Azure, sin
+identidad administrada, el respaldo local se crea y se registra que la copia a
+Blob no está disponible. Tras agotar los reintentos, no hay una cola persistente
+de cargas pendientes; el archivo local se conserva sujeto a su rotación habitual.
+
 ## Despliegue en Azure
 
 La imagen contiene la aplicación compilada, Chromium y el cliente PostgreSQL 18.
