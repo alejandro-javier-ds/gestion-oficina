@@ -417,6 +417,7 @@ export default function SelectorNumeroSalida({
     setError("");
 
     try {
+      window.open("/whatsapp/visor?numero=" + numero + "&temporal=1", "_blank", "noopener,noreferrer");
       onChange(numero);
 
       const propietarioTemporal = propietarioSeleccionado();
@@ -502,12 +503,14 @@ export default function SelectorNumeroSalida({
   }
 
   async function reconectarNumero(numero: string) {
+    window.open("/whatsapp/visor?numero=" + numero, "_blank", "noopener,noreferrer");
     setProcesando(true);
 
     setError("");
 
     try {
-      const estado = await iniciarSesionPlaywright(numero, false);
+      const estado = estadoSesion?.numero === numero && estadoSesion.iniciado
+        ? estadoSesion : await iniciarSesionPlaywright(numero, false);
 
       setEstadoSesion(estado);
 
@@ -699,6 +702,12 @@ export default function SelectorNumeroSalida({
             >
               {procesando ? "Abriendo WhatsApp..." : "Vincular WhatsApp"}
             </button>
+          )}
+
+          {puedeVincular && estadoSesion.iniciado && (
+            <a className="boton-secundario mt-3 inline-block"
+              href={"/whatsapp/visor?numero=" + estadoSesion.numero + (estadoSesion.temporal ? "&temporal=1" : "")}
+              target="_blank" rel="noopener noreferrer">Ver ventana de WhatsApp</a>
           )}
 
           {estadoSesion.conectado && (

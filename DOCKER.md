@@ -19,8 +19,8 @@ Desde la carpeta del proyecto, con Docker Desktop iniciado en modo Linux:
    if (!(Test-Path .env.docker)) { Copy-Item docker/environment.example .env.docker }
    ```
 
-2. Genera **tres valores diferentes** con este comando y colócalos en
-   `JWT_SECRET`, `DOCKER_POSTGRES_PASSWORD` y `BROWSER_DESKTOP_PASSWORD`:
+2. Genera **dos valores diferentes** con este comando y colócalos en
+   `JWT_SECRET` y `DOCKER_POSTGRES_PASSWORD`:
 
    ```powershell
    node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
@@ -83,58 +83,143 @@ Desde la carpeta del proyecto, con Docker Desktop iniciado en modo Linux:
    base; puede tardar unos segundos en aparecer. Cambia la contraseña inicial y
    carga el portafolio desde el panel habitual.
 
-## WhatsApp y el QR
+## WhatsApp remoto y QR
 
-En **WhatsApp Masivo → Número de salida**, **Agregar número** guarda el teléfono
-y su propietario en el desplegable sin abrir Chromium. El registro no significa
-que WhatsApp esté conectado: para enviar desde ese teléfono hay que vincularlo.
+**Agregar número** guarda el teléfono y su propietario para el selector y los
+tenores sin exigir vincular WhatsApp. **Abrir WhatsApp** o **Vincular WhatsApp**
+abre una pestaña del CRM que muestra el Chromium del contenedor, completo.
+Es la misma página y el mismo perfil que utiliza Playwright para los envíos.
 
-Un administrador o supervisor puede seleccionar el número y pulsar **Ver estado**
-y **Vincular WhatsApp** o **Abrir WhatsApp**. El QR aparece dentro del CRM.
-En el celular, abre **WhatsApp → Dispositivos vinculados → Vincular un dispositivo**.
-El CRM consulta la vinculación cada tres segundos mientras se está conectando,
-actualiza el QR y lo retira al detectar **Conectado**. Una vez conectado consulta
-cada diez segundos. Cerrar el panel o cambiar de número detiene esa consulta.
+El visor usa noVNC con una pantalla Xvfb privada por sesión. Los números distintos
+no comparten escritorio. x11vnc escucha exclusivamente en `127.0.0.1` dentro del
+contenedor; el navegador se conecta por WSS al mismo dominio HTTPS del CRM.
+El gateway de `docker/gateway.mjs` comparte el puerto 3000 con la aplicación y
+mantiene el servidor standalone de Next.js en un puerto interno de loopback.
+No se publican VNC, websockify ni Chromium. El antiguo visor del puerto 6080
+ya no se inicia ni se publica en Compose.
 
-La API de vinculación valida sesión, rol y acceso al número y responde con
-`Cache-Control: private, no-store, max-age=0`. Solo extrae el canvas identificado
-como QR; no captura la página, conversaciones ni contactos. Las imágenes no se
-guardan en archivos, logs o PostgreSQL. Los números registrados y activos son
-compartidos por los administradores y supervisores según los permisos existentes;
-el QR de una sesión temporal solo está disponible para el usuario que la abrió.
+El origen de producción permitido es exclusivamente:
+`https://ca-gestiones-caillaux.politehill-e3f16b67.centralus.azurecontainerapps.io`.
+No se admiten comodines ni listas de orígenes. Compose usa únicamente
+`http://localhost:3001` para desarrollo, o el puerto local configurado en `APP_PORT`.
 
-Chromium continúa ejecutándose con Xvfb. Para vincular desde el CRM no se necesita
-habilitar `ENABLE_BROWSER_DESKTOP`, publicar otro puerto ni acceder a VNC.
-El visor opcional de desarrollo sigue disponible en la combinación local de Compose,
-en **http://localhost:6080/vnc.html?autoconnect=true&resize=scale**, con el usuario
-`operador` y `BROWSER_DESKTOP_PASSWORD`. Conserva ese visor deshabilitado en Azure;
-no debe publicarse directamente en Internet.
+La entrada al visor exige sesión vigente, usuario activo, cambio de contraseña
+completado, rol administrador o supervisor y acceso al número. Los números
+registrados y activos conservan los permisos compartidos de esos dos roles;
+las sesiones temporales solo son accesibles por su creador. El gateway repite
+la autorización cada cinco segundos y cierra la conexión ante revocación,
+cambio de permisos o pérdida de Chromium. Si vence el JWT original del socket,
+el cliente solo reconecta después de comprobar nuevamente su acceso por HTTPS.
 
-Los perfiles permanentes conservan su ruta `/app/whatsapp-sessions/<numero>`.
-Las sesiones de **Usar una vez** se guardan aparte en
-`/app/whatsapp-sessions/.temporales/<numero>-<usuario>`. Su cierre no borra perfiles
-permanentes, ni intenta borrar perfiles cuyo carácter temporal no se pueda acreditar.
+El puerto privado y el identificador de escritorio se resuelven mediante una
+API interna protegida por una clave aleatoria creada al arrancar. La clave nunca
+llega al navegador ni se configura en Azure. Un identificador de ventana no
+autoriza por sí solo una conexión. Las respuestas del visor usan
+`Cache-Control: private, no-store, max-age=0`. No se guardan imágenes, QR,
+eventos de teclado, cookies o perfiles en logs. El portapapeles remoto está
+deshabilitado.
 
-En Linux, antes de abrir Chromium se comprueba escritura y soporte de enlaces
-simbólicos y se toma un bloqueo `flock` por perfil, que se mantiene hasta cerrar
-el navegador. Un perfil ocupado devuelve un error recuperable y no se abre otro
-Chromium sobre él. El contenedor incluye `flock` mediante `util-linux`.
+Chromium recibe únicamente variables de entorno necesarias para su pantalla,
+sin las credenciales PostgreSQL, JWT o identidad de Azure. La imagen instala
+políticas de solo lectura, propiedad de root, que bloquean archivos locales,
+páginas internas y navegación a endpoints de loopback o metadatos. Los diálogos
+para elegir archivos del servidor están deshabilitados. Esto también impide
+adjuntar archivos del contenedor desde la ventana remota; las campañas de texto
+conservan su funcionamiento existente.
 
-En Azure Files SMB, revisa las opciones del montaje dedicado a WhatsApp:
-`uid=1000,gid=1000,dir_mode=0700,file_mode=0600,mfsymlinks`, con lectura/escritura
-y sin `nobrl`, porque esa opción desactiva los bloqueos entre clientes. El código
-comprueba el montaje y conserva el perfil si no puede protegerlo. El `chown` del
-Dockerfile no cambia los permisos de un volumen montado por Azure. Estas opciones
-deben comprobarse en el entorno real; el código no modifica montajes ni secretos.
-[Montajes de Container Apps](https://learn.microsoft.com/en-us/azure/container-apps/storage-mounts)
-y [Azure Files SMB en Linux](https://learn.microsoft.com/en-us/azure/storage/files/storage-how-to-use-files-linux).
+La pestaña empieza en **Solo ver**. Usa **Activar control** para interactuar con
+WhatsApp; escanea desde **WhatsApp → Dispositivos vinculados** en el celular.
+Durante una campaña conserva **Solo ver**, porque las acciones manuales sobre
+la misma ventana pueden interferir con Playwright. Cerrar la pestaña desconecta
+el visor, pero conserva Chromium y su perfil para los envíos y posteriores visitas.
 
-Después de una interrupción, los bloqueos obsoletos de Chromium se recuperan solo
-con el bloqueo del perfil adquirido y cuando se puede acreditar que no hay un
-proceso local activo o que el perfil estaba administrado por este mecanismo.
-Un bloqueo de otro contenedor anterior a este cambio requiere verificar que esa
-instancia terminó; no se elimina automáticamente ni se borra el perfil.
-WhatsApp puede revocar la vinculación y exigir otro escaneo aunque el volumen se conserve.
+La extracción del QR dentro del panel se mantiene como ayuda; el visor remoto
+funciona independientemente de que los selectores del QR reconozcan la página.
+Si WhatsApp no muestra QR ni conversaciones durante 90 segundos, el estado deja
+de permanecer indefinidamente en «Conectando» y pide revisar la ventana remota.
+La apertura inicial comprueba errores HTTP al cargar WhatsApp. No se puede
+deducir la causa concreta de un perfil de producción sin observar esa ventana.
+
+Los perfiles permanentes conservan `/app/whatsapp-sessions/<numero>`.
+Las sesiones temporales conservan su carpeta separada en `.temporales`.
+Los bloqueos `flock` por perfil, la comprobación de escritura/enlaces simbólicos
+y la recuperación segura de enlaces obsoletos permanecen vigentes.
+Azure Files SMB requiere escritura para UID 1000, `mfsymlinks` y bloqueos
+entre clientes habilitados, sin `nobrl`. No se eliminan perfiles para reconectar.
+
+`docker/next-start.mjs` gestiona el apagado del servidor para cerrar Chromium
+antes de liberar su perfil y pantalla. Playwright deja esa gestión de señales
+al contenedor cuando el visor está habilitado. El apagado tiene un límite de
+18 segundos; una terminación forzada o la desvinculación desde el teléfono
+pueden requerir un nuevo escaneo.
+
+[API de noVNC](https://novnc.com/noVNC/docs/API.html),
+[ingreso de Container Apps y WebSockets](https://learn.microsoft.com/en-us/azure/container-apps/ingress-overview)
+y [montajes de Container Apps](https://learn.microsoft.com/en-us/azure/container-apps/storage-mounts).
+Las restricciones de navegador usan [políticas administradas de Chromium](https://www.chromium.org/administrators/linux-quick-start/).
+
+## Validación del visor
+
+Las pruebas locales cubren la autorización por rol y número, la revocación de
+usuarios, la apertura simultánea, los estados y el transporte del visor. También
+se ejecutan las regresiones de lógica, importación, PostgreSQL simulado y Blob:
+116 pruebas, sin conexión a la base de producción. TypeScript y ESLint se
+comprueban sobre los archivos cambiados y la imagen se compila en Docker.
+
+La validación del servidor compilado utiliza HTTPS/WSS, noVNC y Chromium reales
+con páginas sintéticas. Comprueba 12 casos: acceso, aislamiento entre dos números,
+teclado y ratón sobre la misma página de Playwright, revocación, estado conectado,
+restricciones del navegador y persistencia después del reinicio. Otras 10
+comprobaciones de Chromium validan bloqueo, almacenamiento y un QR obtenido de
+WhatsApp Web público con un perfil nuevo, sin escanearlo ni enviar mensajes.
+Las pruebas se conservan localmente, ignoradas por Git y Docker; el QR real no
+se guarda en capturas ni logs.
+
+Quedan pendientes la revisión desplegada en Azure, las opciones y permisos de
+su montaje Azure Files SMB, el escaneo con un teléfono y un envío controlado
+expresamente autorizado. Una prueba en Docker no confirma el funcionamiento en
+producción. Las instrucciones siguientes describen el despliegue manual.
+
+## Desplegar esta corrección en Azure Portal
+
+1. Espera que el workflow **Docker** del commit **Sistema CRM** termine correctamente.
+   La imagen se publica en el ACR existente con la etiqueta SHA de ese commit.
+2. En **Container Apps → ca-gestiones-caillaux → Containers → Edit and deploy**,
+   selecciona `acrgestionescaillaux-hwg9a5hvg7f6bxeu.azurecr.io/gestion-oficina:<SHA_DEL_COMMIT>`.
+   Mantén el comando predeterminado de la imagen y todas las variables,
+   referencias a secretos, identidad administrada y volúmenes existentes.
+   No ejecutes `init-db` ni `create-admin` sobre esta base de producción.
+3. Comprueba estas variables en la nueva revisión:
+   - `WHATSAPP_REMOTE_VIEWER=1`.
+   - `CRM_PUBLIC_ORIGIN=https://ca-gestiones-caillaux.politehill-e3f16b67.centralus.azurecontainerapps.io`.
+   - `PORT=3000` y `HOSTNAME=0.0.0.0`.
+   No agregues `WHATSAPP_VISOR_INTERNAL_SECRET`, contraseñas VNC ni claves de Blob.
+   El visor compartido antiguo queda deshabilitado aunque existiera una variable
+   `ENABLE_BROWSER_DESKTOP` de una configuración anterior.
+4. En **Ingress**, mantén el ingreso HTTP existente con destino **3000**,
+   transporte **Auto** y **Allow insecure connections** desactivado.
+   No agregues puertos 5900, 6080 ni un puerto de depuración de Chromium.
+5. Usa **una revisión activa**, escala mínima **1** y máxima **1**.
+   Después de que la nueva revisión esté sana y reciba el 100 % del tráfico,
+   comprueba que `ca-gestiones-caillaux--0000013` y cualquier otra revisión
+   anterior hayan terminado antes de abrir sus perfiles. La sesión reside en
+   un proceso; esta implementación no distribuye Chromium entre réplicas.
+6. Conserva el montaje de `/app/whatsapp-sessions` y los volúmenes de respaldos.
+   Comprueba los permisos, `mfsymlinks` y la ausencia de `nobrl` del montaje de
+   WhatsApp. Si un bloqueo indica que otro contenedor usa el perfil, espera su
+   cierre; no borres el perfil ni sus datos.
+7. En el dominio principal, inicia sesión como administrador o supervisor,
+   selecciona el número y pulsa **Abrir WhatsApp**. Permite la pestaña emergente
+   si el navegador la bloquea; también está disponible **Ver ventana de WhatsApp**.
+   Escanea el QR, confirma **WhatsApp conectado** y conserva **Solo ver** al
+   observar las campañas que autorices desde el CRM.
+8. La validación de un envío real queda pendiente. Realiza solo una prueba
+   pequeña, a un destinatario de prueba y expresamente autorizada. Las pruebas
+   automatizadas no envían mensajes ni habilitan campañas reales.
+
+Cada sesión activa añade un Chromium, una pantalla Xvfb y x11vnc. Vigila memoria
+y CPU si utilizas varios números a la vez. La persistencia depende del montaje
+y de que WhatsApp mantenga el vínculo; WhatsApp puede solicitar otro escaneo.
 
 ## Persistencia y operación
 

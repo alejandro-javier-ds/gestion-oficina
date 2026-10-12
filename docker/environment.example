@@ -1,13 +1,11 @@
 # Copia este archivo a .env.docker. Ese archivo queda ignorado por Git.
-# Genera tres valores diferentes, por ejemplo con:
+# Genera dos valores diferentes, por ejemplo con:
 # node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
 JWT_SECRET=
 DOCKER_POSTGRES_PASSWORD=
-BROWSER_DESKTOP_PASSWORD=
 
 # Docker local usa 3001 para conservar tu Next.js local en 3000.
 APP_PORT=3001
-BROWSER_DESKTOP_PORT=6080
 APP_IMAGE=gestion-oficina:local
 
 # Solo con compose.yaml y una BD externa: usa su URL, con TLS en Azure.

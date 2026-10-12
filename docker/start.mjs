@@ -1,12 +1,17 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import net from "node:net";
+import { randomBytes } from "node:crypto";
+import { crearGateway } from "./gateway.mjs";
 
 const children = new Set();
 let stopping = false;
+let gateway;
 
 function stop(code = 0) {
   if (stopping) return;
   stopping = true;
+  void gateway?.cerrar().catch(() => {});
   for (const child of children) child.kill("SIGTERM");
   const timer = setTimeout(() => {
     for (const child of children) child.kill("SIGKILL");
@@ -24,8 +29,8 @@ function stop(code = 0) {
   ).then(() => process.exit(code));
 }
 
-function launch(program, args, name) {
-  const child = spawn(program, args, { stdio: "inherit", env: process.env });
+function launch(program, args, name, env = process.env) {
+  const child = spawn(program, args, { stdio: "inherit", env });
   children.add(child);
   child.once("error", () => {
     console.error(`No se pudo iniciar ${name}.`);
@@ -61,50 +66,24 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
-  if (process.env.ENABLE_BROWSER_DESKTOP === "1") {
-    const password = process.env.BROWSER_DESKTOP_PASSWORD || "";
-    if (!/^[\x21-\x7e]{16,}$/.test(password)) {
-      throw new Error(
-        "BROWSER_DESKTOP_PASSWORD debe tener al menos 16 caracteres ASCII sin espacios.",
-      );
-    }
-    launch("fluxbox", ["-display", display], "gestor de ventanas");
-    launch(
-      "x11vnc",
-      [
-        "-display",
-        display,
-        "-listen",
-        "127.0.0.1",
-        "-rfbport",
-        "5900",
-        "-forever",
-        "-shared",
-        "-nopw",
-      ],
-      "visor interno",
-    );
-    launch(
-      "websockify",
-      [
-        "--web",
-        "/usr/share/novnc",
-        "--web-auth",
-        "--auth-plugin",
-        "BasicHTTPAuth",
-        "--auth-source",
-        `operador:${password}`,
-        "0.0.0.0:6080",
-        "127.0.0.1:5900",
-      ],
-      "visor autenticado",
-    );
-    console.log(
-      "Visor opcional de WhatsApp habilitado; requiere autenticación de operador.",
-    );
-  }
-
-  launch(process.execPath, ["/app/server.js"], "Next.js");
+  const reserva = net.createServer();
+  await new Promise((resolve, reject) => {
+    reserva.once("error", reject);
+    reserva.listen(0, "127.0.0.1", resolve);
+  });
+  const puertoNext = reserva.address().port;
+  await new Promise((resolve) => reserva.close(resolve));
+  const secreto = randomBytes(32).toString("hex");
+  process.env.WHATSAPP_VISOR_INTERNAL_SECRET = secreto;
+  gateway = crearGateway({ puertoNext, secreto, origen: process.env.CRM_PUBLIC_ORIGIN });
+  launch(process.execPath, ["/app/docker/next-start.mjs"], "Next.js", {
+    ...process.env, PORT: String(puertoNext), HOSTNAME: "127.0.0.1", NEXT_MANUAL_SIG_HANDLE: "true",
+  });
+  await new Promise((resolve, reject) => {
+    gateway.servidor.once("error", reject);
+    gateway.servidor.listen(Number(process.env.PORT || 3000), process.env.HOSTNAME || "0.0.0.0", resolve);
+  });
+  console.log("CRM iniciado con visor de WhatsApp protegido por el mismo ingreso HTTP.");
 } catch (error) {
   console.error(
     error instanceof Error

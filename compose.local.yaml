@@ -6,10 +6,6 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://gestion:${DOCKER_POSTGRES_PASSWORD:?Define DOCKER_POSTGRES_PASSWORD en .env.docker}@db:5432/gestion_oficina_docker
-      ENABLE_BROWSER_DESKTOP: "1"
-      BROWSER_DESKTOP_PASSWORD: ${BROWSER_DESKTOP_PASSWORD:?Define BROWSER_DESKTOP_PASSWORD en .env.docker}
-    ports:
-      - "127.0.0.1:${BROWSER_DESKTOP_PORT:-6080}:6080"
 
   db:
     image: postgres:18-bookworm

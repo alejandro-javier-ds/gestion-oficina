@@ -4,6 +4,7 @@ import path from "node:path";
 import { ErrorWhatsapp } from "./errores";
 import { esPaginaWhatsapp, leerVinculacionPagina } from "./qr";
 import { prepararPerfilWhatsapp } from "./perfil";
+import { abrirEscritorioWhatsapp, type EscritorioWhatsapp } from "./escritorio";
 
 const CARPETA_SESIONES = path.join(process.cwd(), "whatsapp-sessions");
 const CARPETA_TEMPORALES = path.join(CARPETA_SESIONES, ".temporales");
@@ -29,6 +30,8 @@ type SesionWhatsappInterna = {
   usuarioTemporalId: number | null;
   carpeta: string;
   control: Awaited<ReturnType<typeof prepararPerfilWhatsapp>>;
+  escritorio: EscritorioWhatsapp | null;
+  ultimaSenal: number;
 };
 type VinculacionWhatsapp = EstadoSesionWhatsapp & { qr: string | null };
 type RegistroWhatsapp = {
@@ -80,7 +83,15 @@ async function leerEstado(numero: string, incluirQr: boolean): Promise<Vinculaci
   if (!sesion || sesion.pagina.isClosed()) return { ...construirEstadoSinSesion(numero), qr: null };
   try {
     const conexion = await leerVinculacionPagina(sesion.pagina, incluirQr);
+    if (conexion.conectado || conexion.qrVisible) sesion.ultimaSenal = Date.now();
     if (sesiones.get(numero) !== sesion || sesion.pagina.isClosed()) return { ...construirEstadoSinSesion(numero), qr: null };
+    if (!conexion.conectado && !conexion.qrVisible && Date.now() - sesion.ultimaSenal > 90_000) {
+      return {
+        numero, iniciado: true, paginaAbierta: true, temporal: sesion.temporal,
+        conectado: false, qrVisible: false, qr: null, estado: "error",
+        mensaje: "WhatsApp Web no terminó de cargar. Abre la ventana remota para revisar la conexión o una pantalla de verificación.",
+      };
+    }
     return {
       numero, iniciado: true, paginaAbierta: true, temporal: sesion.temporal,
       conectado: conexion.conectado, qrVisible: conexion.qrVisible, qr: conexion.qr,
@@ -115,7 +126,10 @@ function quitarSesion(sesion: SesionWhatsappInterna) {
 function registrarEventosSesion(sesion: SesionWhatsappInterna) {
   sesion.contexto.on("close", () => {
     quitarSesion(sesion);
+  });
+  sesion.contexto.browser()?.once("disconnected", () => {
     void sesion.control.liberar();
+    void sesion.escritorio?.cerrar();
   });
   sesion.pagina.on("close", () => {
     if (sesiones.get(sesion.numero) === sesion) void cerrarWhatsapp(sesion.numero).catch(() => {});
@@ -128,6 +142,10 @@ function registrarEventosSesion(sesion: SesionWhatsappInterna) {
     errores.set(sesion.numero, new ErrorWhatsapp("BLOQUEO_WHATSAPP", "Se perdió el bloqueo del perfil. La sesión se cerró para proteger los datos."));
     void cerrarWhatsapp(sesion.numero).catch(() => {});
   });
+  sesion.escritorio?.alCerrar(() => {
+    errores.set(sesion.numero, new ErrorWhatsapp("VISOR_NO_DISPONIBLE", "La pantalla de WhatsApp se detuvo. El perfil se conserva; intenta reconectar."));
+    void cerrarWhatsapp(sesion.numero).catch(() => {});
+  });
 }
 function clasificarErrorInicio(error: unknown): ErrorWhatsapp {
   if (error instanceof ErrorWhatsapp) return error;
@@ -138,6 +156,7 @@ function clasificarErrorInicio(error: unknown): ErrorWhatsapp {
 async function abrirSesion(numero: string, temporal: boolean, usuarioTemporalId?: number): Promise<EstadoSesionWhatsapp> {
   let contexto: BrowserContext | undefined;
   let control: Awaited<ReturnType<typeof prepararPerfilWhatsapp>> | undefined;
+  let escritorio: EscritorioWhatsapp | null = null;
   try {
     if (sesiones.has(numero)) await cerrarWhatsapp(numero);
     if (temporal && (!Number.isSafeInteger(usuarioTemporalId) || Number(usuarioTemporalId) <= 0)) {
@@ -145,21 +164,29 @@ async function abrirSesion(numero: string, temporal: boolean, usuarioTemporalId?
     }
     const carpeta = temporal ? path.join(CARPETA_TEMPORALES, numero + "-" + usuarioTemporalId) : obtenerCarpetaSesion(numero);
     control = await prepararPerfilWhatsapp(carpeta);
+    escritorio = await abrirEscritorioWhatsapp();
     contexto = await chromium.launchPersistentContext(carpeta, {
-      headless: false, viewport: { width: 1440, height: 900 }, locale: "es-PE", timezoneId: "America/Lima",
+      headless: false, viewport: escritorio ? null : { width: 1440, height: 900 }, locale: "es-PE", timezoneId: "America/Lima",
       acceptDownloads: false, timeout: 30_000,
-      args: ["--start-maximized", "--disable-blink-features=AutomationControlled"],
+      ...(escritorio ? { handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false, env: {
+        ...Object.fromEntries(["PATH", "HOME", "LANG", "LC_ALL", "TZ", "XAUTHORITY", "XDG_RUNTIME_DIR"]
+          .flatMap((clave) => process.env[clave] ? [[clave, process.env[clave]!]] : [])),
+        DISPLAY: escritorio.display,
+      } } : {}),
+      args: [escritorio ? "--window-size=1600,1000" : "--start-maximized", "--window-position=0,0", "--disable-blink-features=AutomationControlled"],
     });
     await control.marcarAdministrado();
     const pagina = contexto.pages().find((pagina) => esPaginaWhatsapp(pagina.url())) ?? contexto.pages()[0] ?? await contexto.newPage();
-    const sesion: SesionWhatsappInterna = { numero, contexto, pagina, temporal, usuarioTemporalId: temporal ? usuarioTemporalId! : null, carpeta, control };
+    const sesion: SesionWhatsappInterna = { numero, contexto, pagina, temporal, usuarioTemporalId: temporal ? usuarioTemporalId! : null, carpeta, control, escritorio, ultimaSenal: Date.now() };
     sesiones.set(numero, sesion);
     registrarEventosSesion(sesion);
-    if (!esPaginaWhatsapp(pagina.url())) await pagina.goto(URL_WHATSAPP, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    const respuesta = await pagina.goto(URL_WHATSAPP, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    if (respuesta && respuesta.status() >= 400) throw new ErrorWhatsapp("WHATSAPP_CARGA", "WhatsApp Web rechazó la carga. Revisa la conexión desde el servidor y vuelve a abrir la sesión.");
     return await obtenerEstadoWhatsapp(numero);
   } catch (error) {
     try { await contexto?.close(); } catch {}
     await control?.liberar();
+    await escritorio?.cerrar();
     const fallo = clasificarErrorInicio(error);
     errores.set(numero, fallo);
     throw fallo;
@@ -207,7 +234,7 @@ export async function cerrarWhatsapp(numeroEntrada: string): Promise<void> {
   if (!sesion) return;
   const cierre = Promise.resolve().then(async () => {
     try { await sesion.contexto.close(); }
-    finally { quitarSesion(sesion); await sesion.control.liberar(); }
+    finally { quitarSesion(sesion); await sesion.control.liberar(); await sesion.escritorio?.cerrar(); }
   });
   cerrando.set(numero, cierre);
   try { await cierre; }
@@ -226,10 +253,12 @@ export async function cerrarYEliminarWhatsappTemporal(numeroEntrada: string): Pr
       await sesion.contexto.close();
       quitarSesion(sesion);
       await sesion.control.liberar();
+      await sesion.escritorio?.cerrar();
       await fs.promises.rm(sesion.carpeta, { recursive: true, force: true, maxRetries: 8, retryDelay: 500 });
     } finally {
       quitarSesion(sesion);
       await sesion.control.liberar();
+      await sesion.escritorio?.cerrar();
     }
   });
   cerrando.set(numero, limpieza);
@@ -254,6 +283,11 @@ export function esSesionWhatsappTemporal(numeroEntrada: string): boolean { retur
 export function obtenerUsuarioSesionTemporal(numeroEntrada: string): number | null { return sesiones.get(normalizarNumero(numeroEntrada))?.usuarioTemporalId ?? null; }
 export function obtenerNumerosTemporalesUsuario(usuarioId: number): string[] {
   return Array.from(sesiones.values()).filter((sesion) => sesion.temporal && sesion.usuarioTemporalId === usuarioId).map((sesion) => sesion.numero);
+}
+export function obtenerEscritorioWhatsapp(numeroEntrada: string) {
+  const sesion = sesiones.get(normalizarNumero(numeroEntrada));
+  const escritorio = sesion?.escritorio;
+  return sesion && !sesion.pagina.isClosed() && escritorio ? { id: escritorio.id, puerto: escritorio.puerto } : null;
 }
 export function normalizarNumeroWhatsapp(numero: string): string { return normalizarNumero(numero); }
 export function esNumeroWhatsappValido(numero: string): boolean { return /^[+\d\s()-]+$/.test(numero) && /^9\d{8}$/.test(normalizarNumero(numero)); }

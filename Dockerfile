@@ -19,7 +19,8 @@ WORKDIR /app
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 \
     PORT=3000 HOSTNAME=0.0.0.0 TZ=America/Lima \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright DISPLAY=:99 \
-    ENABLE_BROWSER_DESKTOP=0
+    ENABLE_BROWSER_DESKTOP=0 WHATSAPP_REMOTE_VIEWER=1 \
+    CRM_PUBLIC_ORIGIN=https://ca-gestiones-caillaux.politehill-e3f16b67.centralus.azurecontainerapps.io
 
 # Cliente 18 para respaldos; la base de datos vive fuera de este contenedor.
 RUN apt-get update \
@@ -38,9 +39,16 @@ RUN apt-get update \
 # Se instala antes del código para reutilizar Chromium al cambiar la aplicación.
 COPY --from=dependencies /app/node_modules/playwright ./node_modules/playwright
 COPY --from=dependencies /app/node_modules/playwright-core ./node_modules/playwright-core
+COPY --from=dependencies /app/node_modules/ws ./node_modules/ws
 RUN node node_modules/playwright/cli.js install --with-deps chromium \
     && chmod -R a+rX /ms-playwright \
     && rm -rf /var/lib/apt/lists/* /root/.npm
+
+RUN install -d -m 755 /etc/opt/chrome_for_testing/policies/managed \
+    /etc/opt/chrome/policies/managed /etc/chromium/policies/managed
+COPY --chown=root:root --chmod=644 docker/chromium-policy.json /etc/opt/chrome_for_testing/policies/managed/crm.json
+COPY --chown=root:root --chmod=644 docker/chromium-policy.json /etc/opt/chrome/policies/managed/crm.json
+COPY --chown=root:root --chmod=644 docker/chromium-policy.json /etc/chromium/policies/managed/crm.json
 
 # Next integra bcryptjs en sus bundles; el comando de alta necesita el paquete.
 COPY --from=dependencies /app/node_modules/bcryptjs ./node_modules/bcryptjs

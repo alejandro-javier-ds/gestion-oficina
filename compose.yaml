@@ -13,6 +13,8 @@ services:
       PORT: "3000"
       HOSTNAME: 0.0.0.0
       ENABLE_BROWSER_DESKTOP: "0"
+      WHATSAPP_REMOTE_VIEWER: "1"
+      CRM_PUBLIC_ORIGIN: http://localhost:${APP_PORT:-3001}
     ports:
       - "127.0.0.1:${APP_PORT:-3001}:3000"
     volumes:

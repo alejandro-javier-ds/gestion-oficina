@@ -208,14 +208,16 @@ una sola transacción: un fallo revierte los cambios de esa importación.
 WhatsApp utiliza sesiones persistentes de Chromium. **Agregar número** guarda el
 teléfono y su propietario en el selector sin exigir la vinculación. Para enviar
 desde él, un administrador o supervisor debe pulsar **Vincular WhatsApp** o
-**Abrir WhatsApp**: el QR aparece directamente dentro del CRM, se actualiza y
-desaparece al detectar **Conectado**. La sesión guardada se reutiliza mientras
-WhatsApp mantenga la vinculación.
+**Abrir WhatsApp**: una pestaña del CRM muestra el Chromium del servidor completo,
+incluidos el QR y las conversaciones. Playwright usa esa misma sesión para los
+envíos. La sesión guardada se reutiliza mientras WhatsApp mantenga la vinculación.
 
-El QR se entrega mediante una API protegida sin caché y no se guardan capturas
-de conversaciones. No se necesita publicar VNC ni otro puerto para escanearlo.
-Consulta [WhatsApp y el QR](DOCKER.md#whatsapp-y-el-qr) para los pasos y los
-requisitos de permisos, enlaces simbólicos y bloqueo de perfiles en Azure Files.
+El visor conecta por HTTPS/WSS con autenticación, autorización y una pantalla
+privada por sesión. Empieza en **Solo ver** y permite **Activar control**.
+No publica VNC ni puertos adicionales. Consulta
+[WhatsApp remoto y QR](DOCKER.md#whatsapp-remoto-y-qr) y
+[despliegue en Azure Portal](DOCKER.md#desplegar-esta-corrección-en-azure-portal)
+para la configuración y los requisitos de Azure Files.
 
 Los respaldos se crean con `pg_dump` y se pueden descargar desde el panel de
 Backups. El programador realiza respaldos los **lunes y jueves a las 17:00, hora
@@ -265,7 +267,7 @@ sus recursos y almacenamiento.
 | Sesiones | Definir un `JWT_SECRET` propio como variable de ejecución. |
 | Primera instalación | Ejecutar `init-db` si la base está vacía y después `create-admin`, proporcionando `BOOTSTRAP_ADMIN_*` únicamente para ese comando. |
 | Persistencia | Montar `/app/backups`, `/app/whatsapp-sessions` y `/app/.whatsapp-sesiones`, con escritura para UID 1000. |
-| Chromium | Disponer de memoria compartida equivalente a `shm_size: 1gb`; el QR se muestra en el CRM sin habilitar el visor. Azure Files debe permitir enlaces simbólicos y bloqueos entre clientes. |
+| Chromium | Disponer de memoria compartida equivalente a `shm_size: 1gb`; el visor privado usa el mismo ingreso HTTP del CRM. Azure Files debe permitir enlaces simbólicos y bloqueos entre clientes. |
 | Instancias | Mantener una instancia mientras las sesiones de WhatsApp y los respaldos programados se administren dentro del proceso. |
 
 La comprobación de salud usa `127.0.0.1` para consultar la aplicación **dentro del
