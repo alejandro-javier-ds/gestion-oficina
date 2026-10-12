@@ -147,6 +147,14 @@ y la recuperación segura de enlaces obsoletos permanecen vigentes.
 Azure Files SMB requiere escritura para UID 1000, `mfsymlinks` y bloqueos
 entre clientes habilitados, sin `nobrl`. No se eliminan perfiles para reconectar.
 
+**Incidente de almacenamiento, 12 de octubre de 2026:** en la revisión
+`0000014` el visor funciona, pero la prueba de IndexedDB reportada desde Azure
+falla sobre SMB y funciona en `/tmp`. Los requisitos anteriores verifican
+permisos y exclusión del perfil; no certifican las bases internas de Chromium.
+No debe considerarse aprobado ese montaje para WhatsApp. Consulta
+[la evaluación de almacenamiento](ALMACENAMIENTO_WHATSAPP.md) antes de cambiar
+el volumen. El visor y los perfiles existentes se conservan.
+
 `docker/next-start.mjs` gestiona el apagado del servidor para cerrar Chromium
 antes de liberar su perfil y pantalla. Playwright deja esa gestión de señales
 al contenedor cuando el visor está habilitado. El apagado tiene un límite de
