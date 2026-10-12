@@ -31,7 +31,7 @@ RUN apt-get update \
        > /etc/apt/sources.list.d/pgdg.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends postgresql-client-18 \
-       xvfb xauth x11vnc novnc websockify fluxbox \
+       xvfb xauth x11vnc novnc websockify fluxbox util-linux \
     && rm -rf /var/lib/apt/lists/*
 
 # Playwright es externo en Next; se copia completo y con su versión bloqueada.

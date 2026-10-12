@@ -1,81 +1,29 @@
-// app/api/whatsapp/playwright/estado/route.ts
-//
-// Consulta el estado de UNA sesión de WhatsApp Web.
-//
-// GET:
-// /api/whatsapp/playwright/estado?numero=950793296
-
 import { NextRequest, NextResponse } from "next/server";
-
-import {
-  obtenerEstadoWhatsapp,
-  obtenerEstadosWhatsapp,
-} from "@/lib/whatsapp/playwright";
-
 import { leerSesionActual } from "@/lib/auth";
+import { consultarFilas } from "@/lib/postgres";
+import { obtenerEstadoWhatsapp, obtenerEstadosWhatsapp, obtenerNumerosTemporalesUsuario, obtenerUsuarioSesionTemporal } from "@/lib/whatsapp/playwright";
+import { autorizarNumeroVinculacion, validarUsuarioVinculacion, respuestaErrorVinculacion, CABECERAS_VINCULACION } from "@/lib/whatsapp/acceso-vinculacion";
 
 export const runtime = "nodejs";
 
-const ROLES_PERMITIDOS = ["administrador", "supervisor"];
-
 export async function GET(request: NextRequest) {
-  const sesion = await leerSesionActual();
-
-  if (!sesion) {
-    return NextResponse.json(
-      {
-        error: "No autenticado.",
-      },
-      {
-        status: 401,
-      },
-    );
-  }
-
-  if (!ROLES_PERMITIDOS.includes(sesion.rol)) {
-    return NextResponse.json(
-      {
-        error: "No tienes permiso para consultar las sesiones de WhatsApp.",
-      },
-      {
-        status: 403,
-      },
-    );
-  }
-
-  const numero = request.nextUrl.searchParams.get("numero")?.trim() ?? "";
-
   try {
+    const sesion = validarUsuarioVinculacion(await leerSesionActual());
+    const numero = request.nextUrl.searchParams.get("numero") ?? "";
     if (!numero) {
-      const sesiones = await obtenerEstadosWhatsapp();
-
-      return NextResponse.json({
-        ok: true,
-
-        sesiones,
-      });
+      const registrados = await consultarFilas<{ numero: string }>("SELECT numero FROM whatsapp_numeros WHERE activo = 1");
+      const candidatos = [...new Set([...registrados.map((fila) => fila.numero), ...obtenerNumerosTemporalesUsuario(sesion.userId)])];
+      const permitidos: string[] = [];
+      for (const candidato of candidatos) {
+        if (obtenerUsuarioSesionTemporal(candidato) !== null && obtenerUsuarioSesionTemporal(candidato) !== sesion.userId) continue;
+        try { await autorizarNumeroVinculacion(sesion, candidato); permitidos.push(candidato); }
+        catch (error) { if (!(error instanceof Error) || !("status" in error) || error.status !== 403) throw error; }
+      }
+      return NextResponse.json({ ok: true, sesiones: await obtenerEstadosWhatsapp(permitidos) }, { headers: CABECERAS_VINCULACION });
     }
-
-    const estado = await obtenerEstadoWhatsapp(numero);
-
-    return NextResponse.json({
-      ok: true,
-
-      ...estado,
-    });
+    const acceso = await autorizarNumeroVinculacion(sesion, numero);
+    return NextResponse.json({ ok: true, ...await obtenerEstadoWhatsapp(acceso.numero) }, { headers: CABECERAS_VINCULACION });
   } catch (error) {
-    console.error("Error consultando sesiones WhatsApp:", error);
-
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "No se pudo consultar el estado de WhatsApp.",
-      },
-      {
-        status: 500,
-      },
-    );
+    return respuestaErrorVinculacion(error);
   }
 }

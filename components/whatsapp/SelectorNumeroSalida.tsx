@@ -2,7 +2,10 @@
 
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { useSesion } from "@/components/SesionProvider";
+import VinculacionWhatsapp from "./VinculacionWhatsapp";
 
 import { CheckCircle2, Loader2, Phone, UserRound, X } from "lucide-react";
 
@@ -89,7 +92,8 @@ const PROPIETARIOS: Propietario[] = [
 ];
 
 function normalizarNumero(valor: string): string {
-  return valor.replace(/\D/g, "").replace(/^51/, "").slice(0, 9);
+  const limpio = valor.replace(/\D/g, "");
+  return limpio.length === 11 && limpio.startsWith("51") ? limpio.slice(2) : limpio;
 }
 
 function esCelularValido(valor: string): boolean {
@@ -180,13 +184,20 @@ export default function SelectorNumeroSalida({
 
   const [procesando, setProcesando] = useState(false);
 
-  const [estadoSesion, setEstadoSesion] = useState<EstadoSesion | null>(null);
+  const [estadoReciente, setEstadoSesion] = useState<EstadoSesion | null>(null);
+
+  const { sesion } = useSesion();
+  const puedeVincular = sesion?.rol === "administrador" || sesion?.rol === "supervisor";
+  const consultaNumeros = useRef<AbortController | null>(null);
 
   const [numeroTemporal, setNumeroTemporal] = useState<string | null>(null);
 
   const [mostrandoEstado, setMostrandoEstado] = useState(false);
 
-  async function cargarEstados() {
+  const cargarEstados = useCallback(async () => {
+    consultaNumeros.current?.abort();
+    const controlador = new AbortController();
+    consultaNumeros.current = controlador;
     setCargandoNumeros(true);
 
     setError("");
@@ -194,6 +205,7 @@ export default function SelectorNumeroSalida({
     try {
       const response = await fetch("/api/whatsapp/playwright/estados", {
         cache: "no-store",
+        signal: controlador.signal,
       });
 
       const data = (await response.json()) as {
@@ -206,18 +218,11 @@ export default function SelectorNumeroSalida({
         throw new Error(data.error ?? "No se pudieron cargar los estados.");
       }
 
+      if (controlador.signal.aborted) return [];
       setNumeros(data.numeros ?? []);
-
-      if (valor) {
-        const seleccionado = (data.numeros ?? []).find(
-          (item) => item.numero === valor,
-        );
-
-        if (seleccionado) {
-          setEstadoSesion(seleccionado);
-        }
-      }
+      return data.numeros ?? [];
     } catch (errorCarga) {
+      if (controlador.signal.aborted) return [];
       console.error("Error cargando estados de WhatsApp:", errorCarga);
 
       setError(
@@ -225,25 +230,36 @@ export default function SelectorNumeroSalida({
           ? errorCarga.message
           : "No se pudieron cargar los estados.",
       );
+      return [];
     } finally {
-      setCargandoNumeros(false);
+      if (consultaNumeros.current === controlador) {
+        consultaNumeros.current = null;
+        setCargandoNumeros(false);
+      }
     }
-  }
+  }, []);
 
   useEffect(() => {
-    void cargarEstados();
-
-    const intervalo = window.setInterval(() => {
-      void cargarEstados();
-    }, 10_000);
-
-    return () => window.clearInterval(intervalo);
-  }, []);
+    let detenido = false;
+    let temporizador: ReturnType<typeof setTimeout> | undefined;
+    const actualizar = async () => {
+      await cargarEstados();
+      if (!detenido) temporizador = setTimeout(() => void actualizar(), 10_000);
+    };
+    void actualizar();
+    return () => {
+      detenido = true;
+      clearTimeout(temporizador);
+      consultaNumeros.current?.abort();
+    };
+  }, [cargarEstados]);
 
   const numeroSeleccionado = useMemo(
     () => numeros.find((item) => item.numero === valor) ?? null,
     [numeros, valor],
   );
+
+  const estadoSesion = estadoReciente?.numero === valor ? estadoReciente : numeroSeleccionado;
 
   function seleccionarNumero(numero: string) {
     setError("");
@@ -318,7 +334,7 @@ export default function SelectorNumeroSalida({
     return data;
   }
 
-  async function registrarYUsar() {
+  async function agregarNumero() {
     const numero = normalizarNumero(numeroManual);
 
     if (!esCelularValido(numero)) {
@@ -358,11 +374,10 @@ export default function SelectorNumeroSalida({
         throw new Error(data.error ?? "No se pudo registrar el número.");
       }
 
-      const estado = await iniciarSesionPlaywright(numero, false);
-
-      setEstadoSesion(estado);
-
-      setNumeroTemporal(null);
+      const lista = await cargarEstados();
+      const registrado = lista.find((item) => item.numero === numero);
+      setEstadoSesion(registrado ?? null);
+      setNumeroTemporal(registrado?.temporal ? numero : null);
 
       setMostrandoEstado(true);
 
@@ -374,16 +389,14 @@ export default function SelectorNumeroSalida({
 
       onChange(numero);
 
-      onPropietarioChange?.(propietarioActual.nombre);
-
-      await cargarEstados();
+      onPropietarioChange?.(registrado?.propietario ?? propietarioActual.nombre);
     } catch (errorRegistro) {
       console.error("Error registrando y usando número:", errorRegistro);
 
       setError(
         errorRegistro instanceof Error
           ? errorRegistro.message
-          : "No se pudo registrar y usar el número.",
+          : "No se pudo agregar el número.",
       );
     } finally {
       setProcesando(false);
@@ -538,6 +551,7 @@ export default function SelectorNumeroSalida({
 
         <select
           value={valor}
+          disabled={procesando}
           onChange={(event) => seleccionarNumero(event.target.value)}
           className="whatsapp-select min-w-0 flex-1"
         >
@@ -665,7 +679,7 @@ export default function SelectorNumeroSalida({
             {estadoSesion.mensaje}
           </p>
 
-          {estadoSesion.estado === "desconectado" && (
+          {puedeVincular && (estadoSesion.estado === "desconectado" || estadoSesion.estado === "error") && (
             <button
               type="button"
               className="boton-secundario mt-3"
@@ -676,7 +690,7 @@ export default function SelectorNumeroSalida({
             </button>
           )}
 
-          {estadoSesion.estado === "no_vinculado" && (
+          {puedeVincular && estadoSesion.estado === "no_vinculado" && (
             <button
               type="button"
               className="boton-secundario mt-3"
@@ -708,7 +722,7 @@ export default function SelectorNumeroSalida({
             </div>
           )}
 
-          {estadoSesion.temporal && estadoSesion.conectado && (
+          {puedeVincular && estadoSesion.temporal && (
             <button
               type="button"
               className="boton-secundario mt-3"
@@ -718,6 +732,8 @@ export default function SelectorNumeroSalida({
               {procesando ? "Cerrando sesión..." : "Cerrar sesión temporal"}
             </button>
           )}
+
+          {puedeVincular && <VinculacionWhatsapp key={`${estadoSesion.numero}-${estadoSesion.iniciado}`} numero={estadoSesion.numero} onEstado={setEstadoSesion} />}
         </div>
       )}
 
@@ -824,22 +840,22 @@ export default function SelectorNumeroSalida({
           </div>
 
           <div className="mt-4 grid gap-2 sm:grid-cols-2">
-            <button
+            {puedeVincular && <button
               type="button"
               className="boton-secundario w-full"
               disabled={procesando}
               onClick={usarUnaVez}
             >
               {procesando ? "Abriendo..." : "Usar una vez"}
-            </button>
+            </button>}
 
             <button
               type="button"
               className="boton-primario w-full"
               disabled={procesando}
-              onClick={registrarYUsar}
+              onClick={agregarNumero}
             >
-              {procesando ? "Registrando..." : "Registrar y usar"}
+              {procesando ? "Guardando..." : "Agregar número"}
             </button>
           </div>
 
@@ -849,8 +865,8 @@ export default function SelectorNumeroSalida({
               color: "var(--color-texto-suave)",
             }}
           >
-            “Usar una vez” crea una sesión temporal y no registra el número.
-            “Registrar y usar” guarda el número para futuras campañas.
+            “Agregar número” lo guarda en la lista sin vincular WhatsApp.
+            {puedeVincular && " “Usar una vez” abre una sesión temporal sin registrar el número."}
           </p>
         </div>
       )}

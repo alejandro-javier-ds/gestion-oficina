@@ -85,17 +85,56 @@ Desde la carpeta del proyecto, con Docker Desktop iniciado en modo Linux:
 
 ## WhatsApp y el QR
 
-El código actual abre Chromium con ventana. Docker incluye una pantalla virtual
-para conservar ese comportamiento. La combinación local de Compose habilita
-un visor en **http://localhost:6080/vnc.html?autoconnect=true&resize=scale**.
-Usa el usuario `operador` y el valor de `BROWSER_DESKTOP_PASSWORD`. Después de
-iniciar WhatsApp desde la aplicación, podrás ver su ventana y escanear el QR.
+En **WhatsApp Masivo → Número de salida**, **Agregar número** guarda el teléfono
+y su propietario en el desplegable sin abrir Chromium. El registro no significa
+que WhatsApp esté conectado: para enviar desde ese teléfono hay que vincularlo.
 
-Los puertos locales de la aplicación y del visor escuchan solamente en
-`127.0.0.1`. Con `compose.yaml` solo, el visor está desactivado. Para utilizarlo
-en un servidor, habilita `ENABLE_BROWSER_DESKTOP=1`, define su contraseña y
-accede mediante un túnel privado o una VPN, con TLS. El visor permite controlar
-el navegador de WhatsApp: no se debe publicar directamente en Internet.
+Un administrador o supervisor puede seleccionar el número y pulsar **Ver estado**
+y **Vincular WhatsApp** o **Abrir WhatsApp**. El QR aparece dentro del CRM.
+En el celular, abre **WhatsApp → Dispositivos vinculados → Vincular un dispositivo**.
+El CRM consulta la vinculación cada tres segundos mientras se está conectando,
+actualiza el QR y lo retira al detectar **Conectado**. Una vez conectado consulta
+cada diez segundos. Cerrar el panel o cambiar de número detiene esa consulta.
+
+La API de vinculación valida sesión, rol y acceso al número y responde con
+`Cache-Control: private, no-store, max-age=0`. Solo extrae el canvas identificado
+como QR; no captura la página, conversaciones ni contactos. Las imágenes no se
+guardan en archivos, logs o PostgreSQL. Los números registrados y activos son
+compartidos por los administradores y supervisores según los permisos existentes;
+el QR de una sesión temporal solo está disponible para el usuario que la abrió.
+
+Chromium continúa ejecutándose con Xvfb. Para vincular desde el CRM no se necesita
+habilitar `ENABLE_BROWSER_DESKTOP`, publicar otro puerto ni acceder a VNC.
+El visor opcional de desarrollo sigue disponible en la combinación local de Compose,
+en **http://localhost:6080/vnc.html?autoconnect=true&resize=scale**, con el usuario
+`operador` y `BROWSER_DESKTOP_PASSWORD`. Conserva ese visor deshabilitado en Azure;
+no debe publicarse directamente en Internet.
+
+Los perfiles permanentes conservan su ruta `/app/whatsapp-sessions/<numero>`.
+Las sesiones de **Usar una vez** se guardan aparte en
+`/app/whatsapp-sessions/.temporales/<numero>-<usuario>`. Su cierre no borra perfiles
+permanentes, ni intenta borrar perfiles cuyo carácter temporal no se pueda acreditar.
+
+En Linux, antes de abrir Chromium se comprueba escritura y soporte de enlaces
+simbólicos y se toma un bloqueo `flock` por perfil, que se mantiene hasta cerrar
+el navegador. Un perfil ocupado devuelve un error recuperable y no se abre otro
+Chromium sobre él. El contenedor incluye `flock` mediante `util-linux`.
+
+En Azure Files SMB, revisa las opciones del montaje dedicado a WhatsApp:
+`uid=1000,gid=1000,dir_mode=0700,file_mode=0600,mfsymlinks`, con lectura/escritura
+y sin `nobrl`, porque esa opción desactiva los bloqueos entre clientes. El código
+comprueba el montaje y conserva el perfil si no puede protegerlo. El `chown` del
+Dockerfile no cambia los permisos de un volumen montado por Azure. Estas opciones
+deben comprobarse en el entorno real; el código no modifica montajes ni secretos.
+[Montajes de Container Apps](https://learn.microsoft.com/en-us/azure/container-apps/storage-mounts)
+y [Azure Files SMB en Linux](https://learn.microsoft.com/en-us/azure/storage/files/storage-how-to-use-files-linux).
+
+Después de una interrupción, los bloqueos obsoletos de Chromium se recuperan solo
+con el bloqueo del perfil adquirido y cuando se puede acreditar que no hay un
+proceso local activo o que el perfil estaba administrado por este mecanismo.
+Un bloqueo de otro contenedor anterior a este cambio requiere verificar que esa
+instancia terminó; no se elimina automáticamente ni se borra el perfil.
+WhatsApp puede revocar la vinculación y exigir otro escaneo aunque el volumen se conserve.
 
 ## Persistencia y operación
 
@@ -119,9 +158,10 @@ la carpeta `docker`, esta guía, el cambio de `next.config.ts` y el workflow
 `.github/workflows/docker.yml`, junto con el código de la aplicación.
 
 El workflow compila la imagen desde el checkout limpio en cada push o pull
-request y comprueba las herramientas de ejecución. No necesita contraseñas,
-no publica una imagen y no despliega en Azure. Las acciones están fijadas a un
-commit concreto. Las pruebas locales continúan ignoradas por Git.
+request y comprueba las herramientas de ejecución. En `main`, el flujo existente
+utiliza OIDC para publicar la imagen verificada en ACR con las etiquetas del commit
+y `latest`; no despliega una revisión de Container Apps. Los pull requests y otras
+ramas solo validan. Las pruebas locales continúan ignoradas por Git.
 
 `.dockerignore` admite solo el código necesario para compilar y los dos
 esquemas SQL. Excluye `.env*`, pruebas, bases locales, portafolios reales,

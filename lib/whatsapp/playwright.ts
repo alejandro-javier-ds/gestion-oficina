@@ -1,36 +1,15 @@
-// lib/whatsapp/playwright.ts
-//
-// Gestión de sesiones independientes de WhatsApp Web.
-//
-// Estados:
-//
-// - conectado
-// - no_vinculado
-// - desconectado
-// - conectando
-// - error
-//
-// Tipos de sesión:
-//
-// - permanente: queda disponible para futuras campañas.
-// - temporal: solo para una campaña/uso temporal.
-
 import { chromium, type BrowserContext, type Page } from "playwright";
-
 import fs from "node:fs";
 import path from "node:path";
+import { ErrorWhatsapp } from "./errores";
+import { esPaginaWhatsapp, leerVinculacionPagina } from "./qr";
+import { prepararPerfilWhatsapp } from "./perfil";
 
 const CARPETA_SESIONES = path.join(process.cwd(), "whatsapp-sessions");
-
+const CARPETA_TEMPORALES = path.join(CARPETA_SESIONES, ".temporales");
 const URL_WHATSAPP = "https://web.whatsapp.com/";
 
-export type EstadoConexionWhatsapp =
-  | "conectado"
-  | "no_vinculado"
-  | "desconectado"
-  | "conectando"
-  | "error";
-
+export type EstadoConexionWhatsapp = "conectado" | "no_vinculado" | "desconectado" | "conectando" | "error";
 export type EstadoSesionWhatsapp = {
   numero: string;
   iniciado: boolean;
@@ -47,626 +26,241 @@ type SesionWhatsappInterna = {
   contexto: BrowserContext;
   pagina: Page;
   temporal: boolean;
+  usuarioTemporalId: number | null;
+  carpeta: string;
+  control: Awaited<ReturnType<typeof prepararPerfilWhatsapp>>;
 };
-
-const sesiones = new Map<string, SesionWhatsappInterna>();
-
-const iniciando = new Set<string>();
+type VinculacionWhatsapp = EstadoSesionWhatsapp & { qr: string | null };
+type RegistroWhatsapp = {
+  sesiones: Map<string, SesionWhatsappInterna>;
+  iniciando: Map<string, Promise<EstadoSesionWhatsapp>>;
+  lecturas: Map<string, Promise<VinculacionWhatsapp>>;
+  errores: Map<string, ErrorWhatsapp>;
+  cerrando: Map<string, Promise<void>>;
+  apagadoRegistrado?: boolean;
+};
+const globalWhatsapp = globalThis as typeof globalThis & { __gestionWhatsapp?: RegistroWhatsapp };
+const registro: RegistroWhatsapp = globalWhatsapp.__gestionWhatsapp ??= {
+  sesiones: new Map(), iniciando: new Map(), lecturas: new Map(), errores: new Map(), cerrando: new Map(),
+};
+const { sesiones, iniciando, lecturas, errores, cerrando } = registro;
 
 function normalizarNumero(numero: string): string {
-  return numero.replace(/\D/g, "").replace(/^51/, "").slice(0, 9);
+  const limpio = numero.replace(/\D/g, "");
+  return limpio.length === 11 && limpio.startsWith("51") ? limpio.slice(2) : limpio;
 }
-
-function esNumeroValido(numero: string): boolean {
-  return /^9\d{8}$/.test(numero);
+function validarNumero(numeroEntrada: string): string {
+  const numero = normalizarNumero(numeroEntrada);
+  if (!esNumeroWhatsappValido(numeroEntrada)) throw new ErrorWhatsapp("NUMERO_INVALIDO", "El número de WhatsApp debe ser un celular peruano válido de 9 dígitos.", 400);
+  return numero;
 }
-
-function asegurarCarpetaSesiones() {
-  if (!fs.existsSync(CARPETA_SESIONES)) {
-    fs.mkdirSync(CARPETA_SESIONES, {
-      recursive: true,
-    });
-  }
-}
-
-async function esperarPaginaViva(
-  pagina: Page,
-  duracionMs: number,
-  intervaloMs = 100,
-): Promise<boolean> {
-  const inicio = Date.now();
-
-  while (Date.now() - inicio < duracionMs) {
-    if (pagina.isClosed()) {
-      return false;
-    }
-
-    const restante = duracionMs - (Date.now() - inicio);
-
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, Math.min(intervaloMs, Math.max(restante, 0)));
-    });
-  }
-
-  return !pagina.isClosed();
-}
-
-function esCierreDeTarget(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-
-  const mensaje = error.message.toLowerCase();
-
-  return (
-    mensaje.includes("target page, context or browser has been closed") ||
-    mensaje.includes("page has been closed") ||
-    mensaje.includes("browser has been closed") ||
-    mensaje.includes("context has been closed")
-  );
-}
-
 function obtenerCarpetaSesion(numero: string): string {
   return path.join(CARPETA_SESIONES, numero);
 }
-
 function existePerfilSesion(numero: string): boolean {
-  const carpeta = obtenerCarpetaSesion(numero);
-
-  if (!fs.existsSync(carpeta)) {
-    return false;
-  }
-
   try {
-    return fs.readdirSync(carpeta).length > 0;
+    return fs.readdirSync(obtenerCarpetaSesion(numero)).some((nombre) => !nombre.startsWith(".crm-") && !nombre.startsWith("Singleton"));
   } catch {
     return false;
   }
 }
-
-function obtenerPaginaActiva(paginas: Page[]): Page | null {
-  if (paginas.length === 0) {
-    return null;
-  }
-
-  return (
-    paginas.find((pagina) => pagina.url().includes("web.whatsapp.com")) ??
-    paginas[0]
-  );
-}
-
-async function detectarConexion(pagina: Page): Promise<{
-  conectado: boolean;
-  qrVisible: boolean;
-}> {
-  const url = pagina.url();
-
-  if (!url.includes("web.whatsapp.com")) {
-    return {
-      conectado: false,
-      qrVisible: false,
-    };
-  }
-
-  const selectoresQr = [
-    "canvas",
-    "[data-ref]",
-    '[aria-label*="QR"]',
-    '[aria-label*="Código QR"]',
-  ];
-
-  for (const selector of selectoresQr) {
-    try {
-      if (
-        await pagina.locator(selector).first().isVisible({
-          timeout: 800,
-        })
-      ) {
-        return {
-          conectado: false,
-          qrVisible: true,
-        };
-      }
-    } catch { }
-  }
-
-  const selectoresConectado = [
-    "#pane-side",
-    '[aria-label="Chat list"]',
-    '[data-testid="chat-list"]',
-  ];
-
-  for (const selector of selectoresConectado) {
-    try {
-      if (
-        await pagina.locator(selector).first().isVisible({
-          timeout: 800,
-        })
-      ) {
-        return {
-          conectado: true,
-          qrVisible: false,
-        };
-      }
-    } catch { }
-  }
-
-  return {
-    conectado: false,
-    qrVisible: false,
-  };
-}
-
 function construirEstadoSinSesion(numero: string): EstadoSesionWhatsapp {
   const tienePerfil = existePerfilSesion(numero);
-
+  const fallo = errores.get(numero);
   return {
-    numero,
-
-    iniciado: false,
-
-    conectado: false,
-
-    qrVisible: false,
-
-    paginaAbierta: false,
-
-    temporal: false,
-
-    estado: tienePerfil ? "desconectado" : "no_vinculado",
-
-    mensaje: tienePerfil
+    numero, iniciado: false, conectado: false, qrVisible: false, paginaAbierta: false, temporal: false,
+    estado: iniciando.has(numero) ? "conectando" : fallo ? "error" : tienePerfil ? "desconectado" : "no_vinculado",
+    mensaje: iniciando.has(numero) ? "WhatsApp Web está iniciándose." : fallo?.message ?? (tienePerfil
       ? "Existe una sesión guardada, pero WhatsApp Web no está conectado."
-      : "Este número todavía no está vinculado a WhatsApp Web.",
+      : "Este número todavía no está vinculado a WhatsApp Web."),
   };
 }
-
-async function construirEstado(
-  sesion: SesionWhatsappInterna | null,
-  numero: string,
-): Promise<EstadoSesionWhatsapp> {
-  if (!sesion || sesion.pagina.isClosed()) {
-    return construirEstadoSinSesion(numero);
-  }
-
+async function leerEstado(numero: string, incluirQr: boolean): Promise<VinculacionWhatsapp> {
+  const sesion = sesiones.get(numero);
+  if (!sesion || sesion.pagina.isClosed()) return { ...construirEstadoSinSesion(numero), qr: null };
   try {
-    const conexion = await detectarConexion(sesion.pagina);
-
-    if (conexion.conectado) {
-      return {
-        numero,
-
-        iniciado: true,
-
-        conectado: true,
-
-        qrVisible: false,
-
-        paginaAbierta: true,
-
-        temporal: sesion.temporal,
-
-        estado: "conectado",
-
-        mensaje: sesion.temporal
-          ? "WhatsApp Web conectado. Esta es una sesión temporal."
-          : "WhatsApp Web conectado y listo para utilizarse.",
-      };
-    }
-
-    if (conexion.qrVisible) {
-      return {
-        numero,
-
-        iniciado: true,
-
-        conectado: false,
-
-        qrVisible: true,
-
-        paginaAbierta: true,
-
-        temporal: sesion.temporal,
-
-        estado: "conectando",
-
-        mensaje: "WhatsApp Web está esperando el escaneo del código QR.",
-      };
-    }
-
+    const conexion = await leerVinculacionPagina(sesion.pagina, incluirQr);
+    if (sesiones.get(numero) !== sesion || sesion.pagina.isClosed()) return { ...construirEstadoSinSesion(numero), qr: null };
     return {
-      numero,
-
-      iniciado: true,
-
-      conectado: false,
-
-      qrVisible: false,
-
-      paginaAbierta: true,
-
-      temporal: sesion.temporal,
-
-      estado: "conectando",
-
-      mensaje: "WhatsApp Web está iniciándose.",
+      numero, iniciado: true, paginaAbierta: true, temporal: sesion.temporal,
+      conectado: conexion.conectado, qrVisible: conexion.qrVisible, qr: conexion.qr,
+      estado: conexion.conectado ? "conectado" : "conectando",
+      mensaje: conexion.conectado
+        ? sesion.temporal ? "WhatsApp Web conectado. Esta es una sesión temporal." : "WhatsApp Web conectado y listo para utilizarse."
+        : conexion.qrVisible ? "Escanea este código QR desde WhatsApp en tu celular." : "WhatsApp Web está iniciándose. Esperando el código QR o la conexión.",
     };
   } catch {
     return {
-      numero,
-
-      iniciado: true,
-
-      conectado: false,
-
-      qrVisible: false,
-
-      paginaAbierta: !sesion.pagina.isClosed(),
-
-      temporal: sesion.temporal,
-
-      estado: "error",
-
-      mensaje: "No se pudo comprobar el estado de WhatsApp Web.",
+      ...construirEstadoSinSesion(numero), iniciado: true, paginaAbierta: !sesion.pagina.isClosed(),
+      temporal: sesion.temporal, estado: "error", mensaje: "No se pudo comprobar el estado de WhatsApp Web. Intenta reconectar.", qr: null,
     };
   }
 }
-
+async function obtenerLectura(numeroEntrada: string, incluirQr: boolean): Promise<VinculacionWhatsapp> {
+  const numero = validarNumero(numeroEntrada);
+  const clave = `${numero}:${incluirQr}`;
+  const pendiente = lecturas.get(clave);
+  if (pendiente) return pendiente;
+  const lectura = leerEstado(numero, incluirQr);
+  lecturas.set(clave, lectura);
+  try { return await lectura; }
+  finally { if (lecturas.get(clave) === lectura) lecturas.delete(clave); }
+}
+export async function obtenerVinculacionWhatsapp(numeroEntrada: string): Promise<VinculacionWhatsapp> {
+  return obtenerLectura(numeroEntrada, true);
+}
+function quitarSesion(sesion: SesionWhatsappInterna) {
+  if (sesiones.get(sesion.numero) === sesion) sesiones.delete(sesion.numero);
+}
 function registrarEventosSesion(sesion: SesionWhatsappInterna) {
   sesion.contexto.on("close", () => {
-    sesiones.delete(sesion.numero);
+    quitarSesion(sesion);
+    void sesion.control.liberar();
   });
-
   sesion.pagina.on("close", () => {
-    const actual = sesiones.get(sesion.numero);
-
-    if (actual?.pagina === sesion.pagina) {
-      sesiones.delete(sesion.numero);
-    }
+    if (sesiones.get(sesion.numero) === sesion) void cerrarWhatsapp(sesion.numero).catch(() => {});
+  });
+  sesion.pagina.on("crash", () => {
+    errores.set(sesion.numero, new ErrorWhatsapp("CHROMIUM_NO_DISPONIBLE", "Chromium se detuvo. El perfil se conserva; intenta reconectar."));
+    void cerrarWhatsapp(sesion.numero).catch(() => {});
+  });
+  sesion.control.alPerderBloqueo(() => {
+    errores.set(sesion.numero, new ErrorWhatsapp("BLOQUEO_WHATSAPP", "Se perdió el bloqueo del perfil. La sesión se cerró para proteger los datos."));
+    void cerrarWhatsapp(sesion.numero).catch(() => {});
   });
 }
-
-async function eliminarCarpetaConReintentos(
-  carpeta: string,
-  intentos = 8,
-  esperaMs = 500,
-): Promise<void> {
-  if (!fs.existsSync(carpeta)) {
-    return;
-  }
-
-  let ultimoError: unknown = undefined;
-
-  for (let intento = 1; intento <= intentos; intento++) {
-    try {
-      await fs.promises.rm(carpeta, {
-        recursive: true,
-
-        force: true,
-      });
-
-      return;
-    } catch (error) {
-      ultimoError = error;
-
-      const codigo = (
-        error as {
-          code?: string;
-        }
-      )?.code;
-
-      const esBloqueo =
-        codigo === "EBUSY" || codigo === "EPERM" || codigo === "ENOTEMPTY";
-
-      if (!esBloqueo || intento === intentos) {
-        throw error;
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, esperaMs));
-    }
-  }
-
-  if (ultimoError) {
-    throw ultimoError;
-  }
+function clasificarErrorInicio(error: unknown): ErrorWhatsapp {
+  if (error instanceof ErrorWhatsapp) return error;
+  const detalle = error instanceof Error ? error.message : "";
+  if (/Singleton|ProcessSingleton|profile.*(?:in use|locked)/i.test(detalle)) return new ErrorWhatsapp("PERFIL_OCUPADO", "El perfil de WhatsApp está ocupado por otra instancia. Se conservó sin cambios.", 409);
+  return new ErrorWhatsapp("CHROMIUM_NO_DISPONIBLE", "No se pudo abrir Chromium o cargar WhatsApp Web. El perfil guardado se conserva; intenta nuevamente.");
 }
-
-export async function iniciarWhatsapp(
-  numeroEntrada: string,
-  temporal = false,
-): Promise<EstadoSesionWhatsapp> {
-  const numero = normalizarNumero(numeroEntrada);
-
-  if (!esNumeroValido(numero)) {
-    throw new Error(
-      "El número de WhatsApp debe ser un celular peruano válido de 9 dígitos.",
-    );
-  }
-
-  const sesionExistente = sesiones.get(numero);
-
-  if (sesionExistente && !sesionExistente.pagina.isClosed()) {
-    return construirEstado(sesionExistente, numero);
-  }
-
-  if (iniciando.has(numero)) {
-    return {
-      numero,
-
-      iniciado: false,
-
-      conectado: false,
-
-      qrVisible: false,
-
-      paginaAbierta: false,
-
-      temporal,
-
-      estado: "conectando",
-
-      mensaje: "La sesión de este número ya se está iniciando.",
-    };
-  }
-
-  iniciando.add(numero);
-
+async function abrirSesion(numero: string, temporal: boolean, usuarioTemporalId?: number): Promise<EstadoSesionWhatsapp> {
+  let contexto: BrowserContext | undefined;
+  let control: Awaited<ReturnType<typeof prepararPerfilWhatsapp>> | undefined;
   try {
-    asegurarCarpetaSesiones();
-
-    const carpetaSesion = obtenerCarpetaSesion(numero);
-
-    if (!fs.existsSync(carpetaSesion)) {
-      fs.mkdirSync(carpetaSesion, {
-        recursive: true,
-      });
+    if (sesiones.has(numero)) await cerrarWhatsapp(numero);
+    if (temporal && (!Number.isSafeInteger(usuarioTemporalId) || Number(usuarioTemporalId) <= 0)) {
+      throw new ErrorWhatsapp("TEMPORAL_SIN_PROPIETARIO", "La sesión temporal requiere un usuario autorizado.", 403);
     }
-
-    const contexto = await chromium.launchPersistentContext(carpetaSesion, {
-      headless: false,
-
-      viewport: {
-        width: 1440,
-
-        height: 900,
-      },
-
-      locale: "es-PE",
-
-      timezoneId: "America/Lima",
-
-      args: [
-        "--start-maximized",
-
-        "--disable-blink-features=AutomationControlled",
-      ],
+    const carpeta = temporal ? path.join(CARPETA_TEMPORALES, numero + "-" + usuarioTemporalId) : obtenerCarpetaSesion(numero);
+    control = await prepararPerfilWhatsapp(carpeta);
+    contexto = await chromium.launchPersistentContext(carpeta, {
+      headless: false, viewport: { width: 1440, height: 900 }, locale: "es-PE", timezoneId: "America/Lima",
+      acceptDownloads: false, timeout: 30_000,
+      args: ["--start-maximized", "--disable-blink-features=AutomationControlled"],
     });
-
-    let pagina = obtenerPaginaActiva(contexto.pages());
-
-    if (!pagina) {
-      pagina = await contexto.newPage();
-    }
-
-    const nuevaSesion: SesionWhatsappInterna = {
-      numero,
-
-      contexto,
-
-      pagina,
-
-      temporal,
-    };
-
-    sesiones.set(numero, nuevaSesion);
-
-    registrarEventosSesion(nuevaSesion);
-
-    try {
-      if (pagina.isClosed()) {
-        sesiones.delete(numero);
-        return construirEstadoSinSesion(numero);
-      }
-
-      if (!pagina.url().includes("web.whatsapp.com")) {
-        await pagina.goto(URL_WHATSAPP, {
-          waitUntil: "domcontentloaded",
-
-          timeout: 60_000,
-        });
-      }
-
-      const paginaSigueViva = await esperarPaginaViva(pagina, 5_000);
-
-      if (!paginaSigueViva) {
-        const actual = sesiones.get(numero);
-
-        if (actual?.pagina === pagina) {
-          sesiones.delete(numero);
-        }
-
-        return construirEstadoSinSesion(numero);
-      }
-
-      return construirEstado(nuevaSesion, numero);
-    } catch (error) {
-      if (pagina.isClosed() || esCierreDeTarget(error)) {
-        const actual = sesiones.get(numero);
-
-        if (actual?.pagina === pagina) {
-          sesiones.delete(numero);
-        }
-
-        try {
-          await contexto.close();
-        } catch { }
-
-        return construirEstadoSinSesion(numero);
-      }
-
-      throw error;
-    }
+    await control.marcarAdministrado();
+    const pagina = contexto.pages().find((pagina) => esPaginaWhatsapp(pagina.url())) ?? contexto.pages()[0] ?? await contexto.newPage();
+    const sesion: SesionWhatsappInterna = { numero, contexto, pagina, temporal, usuarioTemporalId: temporal ? usuarioTemporalId! : null, carpeta, control };
+    sesiones.set(numero, sesion);
+    registrarEventosSesion(sesion);
+    if (!esPaginaWhatsapp(pagina.url())) await pagina.goto(URL_WHATSAPP, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    return await obtenerEstadoWhatsapp(numero);
   } catch (error) {
-    const sesion = sesiones.get(numero);
-
-    if (sesion) {
-      try {
-        await sesion.contexto.close();
-      } catch { }
-
-      sesiones.delete(numero);
-    }
-
-    if (esCierreDeTarget(error)) {
-      return construirEstadoSinSesion(numero);
-    }
-
-    throw error;
-  } finally {
-    iniciando.delete(numero);
+    try { await contexto?.close(); } catch {}
+    await control?.liberar();
+    const fallo = clasificarErrorInicio(error);
+    errores.set(numero, fallo);
+    throw fallo;
   }
 }
-
-export async function obtenerEstadoWhatsapp(
-  numeroEntrada: string,
-): Promise<EstadoSesionWhatsapp> {
-  const numero = normalizarNumero(numeroEntrada);
-
-  if (!esNumeroValido(numero)) {
-    throw new Error("El número de WhatsApp no es válido.");
+export async function iniciarWhatsapp(numeroEntrada: string, temporal = false, usuarioTemporalId?: number): Promise<EstadoSesionWhatsapp> {
+  const numero = validarNumero(numeroEntrada);
+  if (cerrando.has(numero)) await cerrando.get(numero);
+  const existente = sesiones.get(numero);
+  if (existente && !existente.pagina.isClosed()) {
+    if (existente.temporal && usuarioTemporalId !== undefined && existente.usuarioTemporalId !== usuarioTemporalId) throw new ErrorWhatsapp("NUMERO_NO_AUTORIZADO", "No tienes permiso para acceder a esa sesión temporal.", 403);
+    const estado = await obtenerEstadoWhatsapp(numero);
+    if (estado.estado !== "error") return estado;
+    await cerrarWhatsapp(numero);
   }
-
-  const sesion = sesiones.get(numero) ?? null;
-
-  return construirEstado(sesion, numero);
-}
-
-export async function obtenerEstadosWhatsapp(
-  numeros?: string[],
-): Promise<EstadoSesionWhatsapp[]> {
-  const lista = numeros ?? Array.from(sesiones.keys());
-
-  const resultados: EstadoSesionWhatsapp[] = [];
-
-  for (const numero of lista) {
-    resultados.push(await obtenerEstadoWhatsapp(numero));
-  }
-
-  return resultados;
-}
-
-export async function cerrarWhatsapp(numeroEntrada: string): Promise<void> {
-  const numero = normalizarNumero(numeroEntrada);
-
-  if (!esNumeroValido(numero)) {
-    throw new Error("El número de WhatsApp no es válido.");
-  }
-
-  const sesion = sesiones.get(numero);
-
-  if (!sesion) {
-    return;
-  }
-
-  try {
-    await sesion.contexto.close();
-  } finally {
-    sesiones.delete(numero);
-  }
-}
-
-export async function cerrarYEliminarWhatsappTemporal(
-  numeroEntrada: string,
-): Promise<void> {
-  const numero = normalizarNumero(numeroEntrada);
-
-  if (!esNumeroValido(numero)) {
-    throw new Error("El número de WhatsApp no es válido.");
-  }
-
-  const sesion = sesiones.get(numero);
-
-  if (sesion && !sesion.temporal) {
-    throw new Error(
-      "La sesión indicada es permanente y no puede eliminarse como temporal.",
-    );
-  }
-
-  if (sesion) {
-    try {
-      await sesion.contexto.close();
-    } finally {
-      sesiones.delete(numero);
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 750));
-  }
-
-  const carpetaSesion = obtenerCarpetaSesion(numero);
-
-  await eliminarCarpetaConReintentos(carpetaSesion);
-}
-
-export async function iniciarWhatsappParaEnvio(
-  numeroEntrada: string,
-  temporal = false,
-  tiempoEsperaMs = 20_000,
-): Promise<EstadoSesionWhatsapp> {
-  let estado = await iniciarWhatsapp(numeroEntrada, temporal);
-
-  if (estado.conectado) {
+  const pendiente = iniciando.get(numero);
+  if (pendiente) {
+    const estado = await pendiente;
+    const iniciada = sesiones.get(numero);
+    if (iniciada?.temporal && usuarioTemporalId !== undefined && iniciada.usuarioTemporalId !== usuarioTemporalId) throw new ErrorWhatsapp("NUMERO_NO_AUTORIZADO", "No tienes permiso para acceder a esa sesión temporal.", 403);
     return estado;
   }
-
-  const inicio = Date.now();
-
-  while (Date.now() - inicio < tiempoEsperaMs) {
-    await new Promise((resolve) => setTimeout(resolve, 1_000));
-
-    estado = await obtenerEstadoWhatsapp(numeroEntrada);
-
-    if (estado.conectado) {
-      return estado;
-    }
-
-    if (estado.qrVisible) {
-      return estado;
-    }
+  errores.delete(numero);
+  const inicio = abrirSesion(numero, temporal, usuarioTemporalId);
+  iniciando.set(numero, inicio);
+  try { return await inicio; }
+  finally { if (iniciando.get(numero) === inicio) iniciando.delete(numero); }
+}
+export async function obtenerEstadoWhatsapp(numeroEntrada: string): Promise<EstadoSesionWhatsapp> {
+  const vinculacion = await obtenerLectura(numeroEntrada, false);
+  return {
+    numero: vinculacion.numero, iniciado: vinculacion.iniciado, conectado: vinculacion.conectado,
+    qrVisible: vinculacion.qrVisible, paginaAbierta: vinculacion.paginaAbierta, temporal: vinculacion.temporal,
+    estado: vinculacion.estado, mensaje: vinculacion.mensaje,
+  };
+}
+export async function obtenerEstadosWhatsapp(numeros?: string[]): Promise<EstadoSesionWhatsapp[]> {
+  return Promise.all((numeros ?? Array.from(sesiones.keys())).map(obtenerEstadoWhatsapp));
+}
+export async function cerrarWhatsapp(numeroEntrada: string): Promise<void> {
+  const numero = validarNumero(numeroEntrada);
+  const cierreAnterior = cerrando.get(numero);
+  if (cierreAnterior) return cierreAnterior;
+  const sesion = sesiones.get(numero);
+  if (!sesion) return;
+  const cierre = Promise.resolve().then(async () => {
+    try { await sesion.contexto.close(); }
+    finally { quitarSesion(sesion); await sesion.control.liberar(); }
+  });
+  cerrando.set(numero, cierre);
+  try { await cierre; }
+  finally { if (cerrando.get(numero) === cierre) cerrando.delete(numero); }
+}
+export async function cerrarYEliminarWhatsappTemporal(numeroEntrada: string): Promise<void> {
+  const numero = validarNumero(numeroEntrada);
+  if (iniciando.has(numero)) throw new ErrorWhatsapp("SESION_INICIANDO", "Espera a que termine de abrirse la sesión temporal.", 409);
+  const sesion = sesiones.get(numero);
+  if (!sesion?.temporal || sesion.usuarioTemporalId === null || path.dirname(sesion.carpeta) !== CARPETA_TEMPORALES) {
+    throw new ErrorWhatsapp("SESION_NO_TEMPORAL", "No hay una sesión temporal propia que se pueda eliminar. Los perfiles permanentes se conservan.", 409);
   }
-
+  if (cerrando.has(numero)) throw new ErrorWhatsapp("SESION_CERRANDO", "La sesión temporal ya se está cerrando.", 409);
+  const limpieza = Promise.resolve().then(async () => {
+    try {
+      await sesion.contexto.close();
+      quitarSesion(sesion);
+      await sesion.control.liberar();
+      await fs.promises.rm(sesion.carpeta, { recursive: true, force: true, maxRetries: 8, retryDelay: 500 });
+    } finally {
+      quitarSesion(sesion);
+      await sesion.control.liberar();
+    }
+  });
+  cerrando.set(numero, limpieza);
+  try { await limpieza; }
+  finally { if (cerrando.get(numero) === limpieza) cerrando.delete(numero); }
+}
+export async function iniciarWhatsappParaEnvio(numeroEntrada: string, temporal = false, tiempoEsperaMs = 20_000): Promise<EstadoSesionWhatsapp> {
+  let estado = await iniciarWhatsapp(numeroEntrada, temporal);
+  const inicio = Date.now();
+  while (!estado.conectado && !estado.qrVisible && Date.now() - inicio < tiempoEsperaMs) {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    estado = await obtenerEstadoWhatsapp(numeroEntrada);
+  }
   return estado;
 }
-
 export function obtenerPaginaWhatsapp(numeroEntrada: string): Page | null {
-  const numero = normalizarNumero(numeroEntrada);
-
-  const sesion = sesiones.get(numero);
-
-  if (!sesion || sesion.pagina.isClosed()) {
-    return null;
-  }
-
-  return sesion.pagina;
+  const sesion = sesiones.get(normalizarNumero(numeroEntrada));
+  return sesion && !sesion.pagina.isClosed() ? sesion.pagina : null;
 }
-
-export function existeSesionWhatsapp(numeroEntrada: string): boolean {
-  const numero = normalizarNumero(numeroEntrada);
-
-  const sesion = sesiones.get(numero);
-
-  return Boolean(sesion && !sesion.pagina.isClosed());
+export function existeSesionWhatsapp(numeroEntrada: string): boolean { return obtenerPaginaWhatsapp(numeroEntrada) !== null; }
+export function esSesionWhatsappTemporal(numeroEntrada: string): boolean { return sesiones.get(normalizarNumero(numeroEntrada))?.temporal ?? false; }
+export function obtenerUsuarioSesionTemporal(numeroEntrada: string): number | null { return sesiones.get(normalizarNumero(numeroEntrada))?.usuarioTemporalId ?? null; }
+export function obtenerNumerosTemporalesUsuario(usuarioId: number): string[] {
+  return Array.from(sesiones.values()).filter((sesion) => sesion.temporal && sesion.usuarioTemporalId === usuarioId).map((sesion) => sesion.numero);
 }
+export function normalizarNumeroWhatsapp(numero: string): string { return normalizarNumero(numero); }
+export function esNumeroWhatsappValido(numero: string): boolean { return /^[+\d\s()-]+$/.test(numero) && /^9\d{8}$/.test(normalizarNumero(numero)); }
 
-export function esSesionWhatsappTemporal(numeroEntrada: string): boolean {
-  const numero = normalizarNumero(numeroEntrada);
-
-  return sesiones.get(numero)?.temporal ?? false;
-}
-
-export function normalizarNumeroWhatsapp(numero: string): string {
-  return normalizarNumero(numero);
-}
-
-export function esNumeroWhatsappValido(numero: string): boolean {
-  return esNumeroValido(normalizarNumero(numero));
+if (!registro.apagadoRegistrado) {
+  registro.apagadoRegistrado = true;
+  const cerrarSesiones = () => { void Promise.allSettled(Array.from(sesiones.keys()).map(cerrarWhatsapp)); };
+  process.once("SIGTERM", cerrarSesiones);
+  process.once("SIGINT", cerrarSesiones);
 }
