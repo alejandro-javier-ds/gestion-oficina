@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
     try { body = await request.json(); }
     catch { throw new ErrorWhatsapp("CUERPO_INVALIDO", "El cuerpo de la solicitud no es válido.", 400); }
     const acceso = await autorizarNumeroVinculacion(sesion, typeof body?.numero === "string" ? body.numero : "");
-    await cerrarYEliminarWhatsappTemporal(acceso.numero);
+    await cerrarYEliminarWhatsappTemporal(acceso.numero, sesion);
     return NextResponse.json({ ok: true, numero: acceso.numero, mensaje: "La sesión temporal de WhatsApp se cerró y se eliminó correctamente." }, { headers: CABECERAS_VINCULACION });
   } catch (error) {
     return respuestaErrorVinculacion(error);

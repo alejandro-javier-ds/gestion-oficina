@@ -18,8 +18,8 @@ export async function POST(request: NextRequest) {
     const sesion = validarUsuarioVinculacion(await leerSesionActual());
     const body = await request.json() as { numero?: unknown; id?: unknown };
     const acceso = await autorizarNumeroVinculacion(sesion, typeof body?.numero === "string" ? body.numero : "");
-    const escritorio = obtenerEscritorioWhatsapp(acceso.numero);
+    const escritorio = await obtenerEscritorioWhatsapp(acceso.numero, sesion);
     if (!escritorio || escritorio.id !== body?.id) throw new ErrorWhatsapp("VISOR_CERRADO", "La ventana de WhatsApp ya no está disponible.", 409);
-    return NextResponse.json({ ...escritorio, usuarioId: sesion.userId }, { headers: CABECERAS_VINCULACION });
+    return NextResponse.json({ ...escritorio, usuarioId: sesion.userId, rol: sesion.rol }, { headers: CABECERAS_VINCULACION });
   } catch (error) { return respuestaErrorVinculacion(error); }
 }

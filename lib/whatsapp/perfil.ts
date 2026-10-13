@@ -115,6 +115,9 @@ export async function prepararPerfilWhatsapp(carpeta: string) {
   let prueba: string | undefined;
   try {
     await fs.mkdir(carpeta, { recursive: true });
+    if (process.env.WHATSAPP_SERVICE === "1" && (await fs.realpath(carpeta) !== path.resolve(carpeta) || (await fs.statfs(carpeta)).type !== 0xef53)) {
+      throw new ErrorWhatsapp("PERFIL_EXT4", "El perfil de WhatsApp debe estar directamente en el disco ext4, sin enlaces a otro almacenamiento.");
+    }
     await fs.access(carpeta, fs.constants.R_OK | fs.constants.W_OK | fs.constants.X_OK);
     if (process.platform === "linux") {
       validarMontajePerfil(carpeta, await fs.readFile("/proc/mounts", "utf8"));

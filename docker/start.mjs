@@ -3,6 +3,7 @@ import fs from "node:fs";
 import net from "node:net";
 import { randomBytes } from "node:crypto";
 import { crearGateway } from "./gateway.mjs";
+import { modoWhatsapp } from "./whatsapp-wire.mjs";
 
 const children = new Set();
 let stopping = false;
@@ -50,6 +51,7 @@ process.once("SIGTERM", () => stop(0));
 process.once("SIGINT", () => stop(0));
 
 try {
+  if (modoWhatsapp() === "local") {
   const display = process.env.DISPLAY || ":99";
   if (!/^:\d+$/.test(display)) throw new Error("DISPLAY no es válido");
   process.env.DISPLAY = display;
@@ -64,6 +66,7 @@ try {
     if (stopping || Date.now() >= deadline)
       throw new Error("Pantalla virtual no disponible");
     await new Promise((resolve) => setTimeout(resolve, 100));
+  }
   }
 
   const reserva = net.createServer();

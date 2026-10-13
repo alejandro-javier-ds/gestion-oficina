@@ -16,7 +16,8 @@ import { consultarFilas } from "@/lib/postgres";
 
 import { leerSesionActual } from "@/lib/auth";
 
-import { obtenerEstadoWhatsapp } from "@/lib/whatsapp/playwright";
+import { obtenerEstadoWhatsapp, type EstadoSesionWhatsapp } from "@/lib/whatsapp/playwright";
+import { ErrorWhatsapp } from "@/lib/whatsapp/errores";
 
 export const runtime = "nodejs";
 
@@ -46,7 +47,7 @@ export async function GET() {
     );
   }
 
-  if (!ROLES_PERMITIDOS.includes(sesion.rol)) {
+  if (sesion.debeCambiarContrasena || !ROLES_PERMITIDOS.includes(sesion.rol)) {
     return NextResponse.json(
       {
         error:
@@ -93,7 +94,13 @@ export async function GET() {
     const numeros = [];
 
     for (const fila of filas) {
-      const estado = await obtenerEstadoWhatsapp(fila.numero);
+      let estado: EstadoSesionWhatsapp;
+      try { estado = await obtenerEstadoWhatsapp(fila.numero, sesion); }
+      catch (error) {
+        if (!(error instanceof ErrorWhatsapp) || error.status !== 503) throw error;
+        estado = { numero: fila.numero, iniciado: false, conectado: false, qrVisible: false, paginaAbierta: false,
+          temporal: false, estado: "error", mensaje: "El servicio privado de WhatsApp no está disponible. El número permanece registrado." };
+      }
 
       numeros.push({
         id: fila.id,
@@ -132,7 +139,7 @@ export async function GET() {
       total: numeros.length,
 
       numeros,
-    });
+    }, { headers: { "Cache-Control": "private, no-store, max-age=0" } });
   } catch (error) {
     console.error("Error consultando estados WhatsApp:", error);
 

@@ -1,6 +1,7 @@
 import http from "node:http";
 import net from "node:net";
-import { WebSocketServer, WebSocket } from "ws";
+import { WebSocketServer, WebSocket, createWebSocketStream } from "ws";
+import { crearClienteWhatsapp, modoWhatsapp } from "./whatsapp-wire.mjs";
 
 const RUTA_AUTORIZAR = "/api/whatsapp/visor/autorizar";
 const RUTA_CONEXION = "/api/whatsapp/visor/conexion";
@@ -19,6 +20,8 @@ export function validarOrigenVisor(valor) {
 
 export function crearGateway({ puertoNext, secreto, origen, intervaloAutorizacion = 5000 }) {
   const permitido = validarOrigenVisor(origen);
+  const remoto = modoWhatsapp() === "remote";
+  let clienteRemoto = null;
   if (!Number.isSafeInteger(puertoNext) || puertoNext < 1 || puertoNext > 65535 || secreto.length < 32) {
     throw new Error("No se pudo configurar el visor.");
   }
@@ -72,9 +75,14 @@ export function crearGateway({ puertoNext, secreto, origen, intervaloAutorizacio
     });
     if (!resultado.ok) return { status: [401, 403, 409].includes(resultado.status) ? resultado.status : 503 };
     const datos = await resultado.json();
-    if (!Number.isSafeInteger(datos.usuarioId) || datos.usuarioId <= 0 ||
-      datos.id !== id || !Number.isSafeInteger(datos.puerto) || datos.puerto < 1 || datos.puerto > 65535) return { status: 503 };
+    if (!Number.isSafeInteger(datos.usuarioId) || datos.usuarioId <= 0 || datos.id !== id ||
+      (remoto ? datos.remoto !== true || !["administrador", "supervisor"].includes(datos.rol)
+        : datos.remoto === true || !Number.isSafeInteger(datos.puerto) || datos.puerto < 1 || datos.puerto > 65535)) return { status: 503 };
     return { status: 200, ...datos };
+  }
+  function mismoDestino(a, b) {
+    return a.status === 200 && a.usuarioId === b.usuarioId && a.id === b.id &&
+      (remoto ? a.remoto === true && a.rol === b.rol : a.puerto === b.puerto);
   }
   servidor.on("upgrade", async (request, socket, head) => {
     socket.on("error", () => {});
@@ -104,20 +112,30 @@ export function crearGateway({ puertoNext, secreto, origen, intervaloAutorizacio
         rechazar(socket, 429); return;
       }
       reserva = Symbol(); reservas.set(reserva, acceso.usuarioId);
-      tcp = net.createConnection({ host: "127.0.0.1", port: acceso.puerto });
-      tcp.pause();
-      tcp.setTimeout(5000, () => tcp.destroy());
-      const conectado = await new Promise((resolve) => {
-        tcp.once("connect", () => resolve(true));
-        tcp.once("error", () => resolve(false));
-        tcp.once("close", () => resolve(false));
-      });
+      let conectado;
+      if (remoto) {
+        clienteRemoto ??= crearClienteWhatsapp();
+        const wsRemoto = await clienteRemoto.abrirVisor(numero, id, { userId: acceso.usuarioId, rol: acceso.rol, debeCambiarContrasena: false });
+        tcp = createWebSocketStream(wsRemoto);
+        tcp.on("error", () => {});
+        tcp.pause();
+        conectado = true;
+      } else {
+        tcp = net.createConnection({ host: "127.0.0.1", port: acceso.puerto });
+        tcp.pause();
+        tcp.setTimeout(5000, () => tcp.destroy());
+        conectado = await new Promise((resolve) => {
+          tcp.once("connect", () => resolve(true));
+          tcp.once("error", () => resolve(false));
+          tcp.once("close", () => resolve(false));
+        });
+      }
       if (!conectado || socket.destroyed) { tcp.destroy(); rechazar(socket, 503); return; }
-      tcp.setTimeout(0);
+      tcp.setTimeout?.(0);
       const vigente = await autorizar(cookie, numero, id);
       if (socket.destroyed) return;
       if (tcp.destroyed) { rechazar(socket, 503); return; }
-      if (vigente.status !== 200 || vigente.usuarioId !== acceso.usuarioId || vigente.puerto !== acceso.puerto) {
+      if (!mismoDestino(vigente, acceso)) {
         tcp.destroy(); rechazar(socket, vigente.status === 200 ? 409 : vigente.status); return;
       }
       websocket.handleUpgrade(request, socket, head, (ws) => {
@@ -138,7 +156,7 @@ export function crearGateway({ puertoNext, secreto, origen, intervaloAutorizacio
         async function comprobar() {
           try {
             const nueva = await autorizar(cookie, numero, id);
-            if (nueva.status !== 200 || nueva.usuarioId !== acceso.usuarioId || nueva.puerto !== acceso.puerto) {
+            if (!mismoDestino(nueva, acceso)) {
               cerrar(nueva.status === 401 || nueva.status === 403 ? 4003 : 4004); return;
             }
             ws.ping();
@@ -173,6 +191,7 @@ export function crearGateway({ puertoNext, secreto, origen, intervaloAutorizacio
     async cerrar() {
       for (const ws of conexiones.keys()) ws.terminate();
       agente.destroy();
+      clienteRemoto?.cerrar();
       websocket.close();
       servidor.closeAllConnections();
       await new Promise((resolve) => servidor.close(resolve));

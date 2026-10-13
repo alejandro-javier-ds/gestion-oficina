@@ -1,2 +1,3 @@
 # El entrypoint se ejecuta en Linux, incluso al clonar desde Windows.
 docker/*.sh text eol=lf
+docker/whatsapp-vm/*.sh text eol=lf

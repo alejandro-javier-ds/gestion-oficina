@@ -155,6 +155,11 @@ No debe considerarse aprobado ese montaje para WhatsApp. Consulta
 [la evaluación de almacenamiento](ALMACENAMIENTO_WHATSAPP.md) antes de cambiar
 el volumen. El visor y los perfiles existentes se conservan.
 
+Para ejecutar Chromium sobre el disco ext4 de `vm-whatsapp-caillaux`, usar
+[la integración privada con la VM](WHATSAPP_VM.md). Con `WHATSAPP_BACKEND=remote`
+el CRM mantiene el visor y delega Chromium y Playwright a `10.0.2.68:8443` con
+mTLS. Sus volúmenes Azure Files y los respaldos PostgreSQL se conservan.
+
 `docker/next-start.mjs` gestiona el apagado del servidor para cerrar Chromium
 antes de liberar su perfil y pantalla. Playwright deja esa gestión de señales
 al contenedor cuando el visor está habilitado. El apagado tiene un límite de

@@ -45,6 +45,12 @@ Desktop.ini
 *.key
 *.pfx
 *.p12
+*.crt
+*.csr
+*.srl
+*.der
+*.jks
+/whatsapp-pki/
 
 # debug
 npm-debug.log*
@@ -69,6 +75,7 @@ logs/
 
 # env files
 .env*
+*.env
 
 # vercel
 .vercel
@@ -88,6 +95,14 @@ next-env.d.ts
 *.sqlite3-*
 *.dump
 *.backup
+*.wa-backup
+/whatsapp-data/
+profile-backups/
+.restore-*/
+recovered-*/
+/tls/
+/recovery/
+/secrets/
 
 # portafolios y exportaciones, aunque se guarden fuera de /data/
 *.xls

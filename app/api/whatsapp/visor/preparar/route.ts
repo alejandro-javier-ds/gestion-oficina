@@ -13,10 +13,10 @@ export async function POST(request: NextRequest) {
     try { body = await request.json(); }
     catch { throw new ErrorWhatsapp("CUERPO_INVALIDO", "El cuerpo de la solicitud no es válido.", 400); }
     const acceso = await autorizarNumeroVinculacion(sesion, typeof body?.numero === "string" ? body.numero : "", body?.temporal === true);
-    const estado = existeSesionWhatsapp(acceso.numero) ? await obtenerEstadoWhatsapp(acceso.numero)
-      : await iniciarWhatsapp(acceso.numero, acceso.temporal, sesion.userId);
+    const estado = await existeSesionWhatsapp(acceso.numero, sesion) ? await obtenerEstadoWhatsapp(acceso.numero, sesion)
+      : await iniciarWhatsapp(acceso.numero, acceso.temporal, sesion.userId, sesion);
     await autorizarNumeroVinculacion(sesion, acceso.numero);
-    const escritorio = obtenerEscritorioWhatsapp(acceso.numero);
+    const escritorio = await obtenerEscritorioWhatsapp(acceso.numero, sesion);
     if (!escritorio) throw new ErrorWhatsapp("VISOR_NO_HABILITADO", "El visor remoto requiere la imagen Docker con WHATSAPP_REMOTE_VIEWER=1. En el escritorio local, Chromium se abre en su propia ventana.", 409);
     return NextResponse.json({
       ok: true, ...estado,

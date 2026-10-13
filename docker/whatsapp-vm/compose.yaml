@@ -1,0 +1,38 @@
+name: whatsapp-caillaux
+services:
+  worker:
+    image: ${WHATSAPP_IMAGE:?Configura una imagen verificada por SHA}
+    user: "999:988"
+    read_only: true
+    restart: "no"
+    init: false
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 768
+    shm_size: 512m
+    stop_grace_period: 120s
+    environment:
+      WHATSAPP_DATA_UUID: ${WHATSAPP_DATA_UUID:?Falta UUID del disco}
+      WHATSAPP_CLIENT_FINGERPRINTS: ${WHATSAPP_CLIENT_FINGERPRINTS:?Falta huella cliente}
+      WHATSAPP_MAX_SESSIONS: ${WHATSAPP_MAX_SESSIONS:-3}
+    ports:
+      - "10.0.2.68:8443:8443"
+    volumes:
+      - type: bind
+        source: /srv/whatsapp-data
+        target: /data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /etc/whatsapp-worker/tls
+        target: /tls
+        read_only: true
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m,mode=1777
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"

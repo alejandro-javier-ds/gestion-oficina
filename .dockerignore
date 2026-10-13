@@ -32,6 +32,8 @@ scripts/postgres/**
 **/.next/**
 **/.git/**
 **/.env*
+**/*.env
+**/whatsapp-pki/**
 **/tests/**
 **/test/**
 **/__tests__/**
@@ -56,6 +58,14 @@ scripts/postgres/**
 **/*.sqlite3-*
 **/*.dump
 **/*.backup
+**/*.wa-backup
+**/whatsapp-data/**
+**/profile-backups/**
+**/.restore-*/**
+**/recovered-*/**
+**/tls/**
+**/recovery/**
+**/secrets/**
 **/*.xls
 **/*.xlsx
 **/*.xlsm
@@ -68,6 +78,11 @@ scripts/postgres/**
 **/*.key
 **/*.pfx
 **/*.p12
+**/*.crt
+**/*.csr
+**/*.srl
+**/*.der
+**/*.jks
 
 # archivos locales del editor, temporales y copias
 **/.vscode/**

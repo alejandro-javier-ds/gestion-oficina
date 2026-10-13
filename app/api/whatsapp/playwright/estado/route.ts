@@ -12,17 +12,20 @@ export async function GET(request: NextRequest) {
     const numero = request.nextUrl.searchParams.get("numero") ?? "";
     if (!numero) {
       const registrados = await consultarFilas<{ numero: string }>("SELECT numero FROM whatsapp_numeros WHERE activo = 1");
-      const candidatos = [...new Set([...registrados.map((fila) => fila.numero), ...obtenerNumerosTemporalesUsuario(sesion.userId)])];
+      const candidatos = [...new Set([...registrados.map((fila) => fila.numero), ...await obtenerNumerosTemporalesUsuario(sesion.userId, sesion)])];
       const permitidos: string[] = [];
       for (const candidato of candidatos) {
-        if (obtenerUsuarioSesionTemporal(candidato) !== null && obtenerUsuarioSesionTemporal(candidato) !== sesion.userId) continue;
-        try { await autorizarNumeroVinculacion(sesion, candidato); permitidos.push(candidato); }
+        try {
+          const propietario = await obtenerUsuarioSesionTemporal(candidato, sesion);
+          if (propietario !== null && propietario !== sesion.userId) continue;
+          await autorizarNumeroVinculacion(sesion, candidato); permitidos.push(candidato);
+        }
         catch (error) { if (!(error instanceof Error) || !("status" in error) || error.status !== 403) throw error; }
       }
-      return NextResponse.json({ ok: true, sesiones: await obtenerEstadosWhatsapp(permitidos) }, { headers: CABECERAS_VINCULACION });
+      return NextResponse.json({ ok: true, sesiones: await obtenerEstadosWhatsapp(permitidos, sesion) }, { headers: CABECERAS_VINCULACION });
     }
     const acceso = await autorizarNumeroVinculacion(sesion, numero);
-    return NextResponse.json({ ok: true, ...await obtenerEstadoWhatsapp(acceso.numero) }, { headers: CABECERAS_VINCULACION });
+    return NextResponse.json({ ok: true, ...await obtenerEstadoWhatsapp(acceso.numero, sesion) }, { headers: CABECERAS_VINCULACION });
   } catch (error) {
     return respuestaErrorVinculacion(error);
   }

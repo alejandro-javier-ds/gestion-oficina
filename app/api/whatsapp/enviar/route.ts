@@ -11,9 +11,10 @@ import {
   conTransaccion,
 } from "@/lib/postgres";
 
-import { leerSesionActual } from "@/lib/auth";
+import { leerSesionActual, type DatosSesion } from "@/lib/auth";
 
-import { enviarUnMensajeWhatsapp } from "@/lib/whatsapp/envio";
+import { enviarUnMensajeWhatsapp, identificadorEnvioWhatsapp } from "@/lib/whatsapp/envio";
+import { autorizarNumeroVinculacion, actualizarPermisoEnvioWhatsapp } from "@/lib/whatsapp/acceso-vinculacion";
 
 import {
   iniciarWhatsappParaEnvio,
@@ -97,6 +98,8 @@ async function enviarConReintento(
   numeroSalida: string,
   telefono: string,
   mensaje: string,
+  sesion: DatosSesion,
+  idEnvio: string,
 ): Promise<ResultadoEnvioConReintento> {
   let reintentos = 0;
 
@@ -108,10 +111,13 @@ async function enviarConReintento(
     const inicio = Date.now();
 
     try {
+      const actorActual = await actualizarPermisoEnvioWhatsapp(sesion, numeroSalida);
       const resultado = await enviarUnMensajeWhatsapp(
         numeroSalida,
         telefono,
         mensaje,
+        actorActual,
+        idEnvio,
       );
 
       const duracionReportada = Number(resultado.duracionMs ?? 0);
@@ -379,7 +385,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  if (!ROLES_PERMITIDOS.includes(sesion.rol)) {
+  if (sesion.debeCambiarContrasena || !ROLES_PERMITIDOS.includes(sesion.rol)) {
     return NextResponse.json(
       {
         error: "No tienes permiso para enviar campañas de WhatsApp.",
@@ -495,11 +501,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const sesionTemporal = esSesionWhatsappTemporal(campana.numero_salida);
+    await autorizarNumeroVinculacion(sesion, campana.numero_salida);
+    const sesionTemporal = await esSesionWhatsappTemporal(campana.numero_salida, sesion);
 
     const estadoWhatsapp = await iniciarWhatsappParaEnvio(
       campana.numero_salida,
       sesionTemporal,
+      20_000,
+      sesion,
     );
 
     if (!estadoWhatsapp.conectado) {
@@ -705,6 +714,8 @@ export async function POST(request: NextRequest) {
         campana.numero_salida,
         telefono,
         mensaje,
+        sesion,
+        identificadorEnvioWhatsapp(campanaId, destinatario.id),
       );
 
       const detalleFinal =
@@ -865,13 +876,13 @@ export async function POST(request: NextRequest) {
         ? "ENVIADA_CON_ERRORES"
         : estadoFinal;
 
-    const temporal = esSesionWhatsappTemporal(campana.numero_salida);
+    const temporal = await esSesionWhatsappTemporal(campana.numero_salida, sesion);
 
     let limpiezaTemporal: string | null = null;
 
     if (temporal) {
       try {
-        await cerrarYEliminarWhatsappTemporal(campana.numero_salida);
+        await cerrarYEliminarWhatsappTemporal(campana.numero_salida, sesion);
 
         limpiezaTemporal =
           "Sesión temporal cerrada y eliminada automáticamente.";

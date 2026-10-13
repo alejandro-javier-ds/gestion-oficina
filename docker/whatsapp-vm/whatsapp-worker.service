@@ -1,0 +1,23 @@
+[Unit]
+Description=WhatsApp Chromium privado del CRM Estudio Caillaux
+Requires=docker.service
+After=docker.service network-online.target srv-whatsapp\x2ddata.mount
+Wants=network-online.target
+RequiresMountsFor=/srv/whatsapp-data
+BindsTo=srv-whatsapp\x2ddata.mount
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/whatsapp-worker
+EnvironmentFile=/etc/whatsapp-worker/worker.env
+ExecStartPre=/bin/sh /opt/whatsapp-worker/preflight.sh
+ExecStart=/usr/bin/docker compose --env-file /etc/whatsapp-worker/worker.env -f /opt/whatsapp-worker/compose.yaml up --no-build --pull never --abort-on-container-exit --exit-code-from worker
+ExecStop=/usr/bin/docker compose --env-file /etc/whatsapp-worker/worker.env -f /opt/whatsapp-worker/compose.yaml stop --timeout 120 worker
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=140
+
+[Install]
+WantedBy=multi-user.target

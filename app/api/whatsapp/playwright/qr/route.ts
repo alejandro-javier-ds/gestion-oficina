@@ -9,7 +9,7 @@ export async function GET(request: NextRequest) {
   try {
     const sesion = validarUsuarioVinculacion(await leerSesionActual());
     const acceso = await autorizarNumeroVinculacion(sesion, request.nextUrl.searchParams.get("numero") ?? "");
-    const vinculacion = await obtenerVinculacionWhatsapp(acceso.numero);
+    const vinculacion = await obtenerVinculacionWhatsapp(acceso.numero, sesion);
     await autorizarNumeroVinculacion(sesion, acceso.numero);
     return NextResponse.json({ ok: true, ...vinculacion }, { headers: CABECERAS_VINCULACION });
   } catch (error) {
