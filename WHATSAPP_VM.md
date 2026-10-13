@@ -1,6 +1,6 @@
 # WhatsApp en la VM de Estudio Caillaux
 
-Esta integración requiere aprobación y despliegue manual. Publicar la rama en GitHub no inicia el servicio de la VM ni cambia Azure Container Apps.
+Esta integración requiere aprobación y despliegue manual. Publicar en `main` ejecuta el workflow de construcción y publicación de la imagen del CRM; no inicia el servicio de la VM ni despliega una revisión de Azure Container Apps.
 
 ## Arquitectura
 
@@ -84,12 +84,12 @@ Los procesos cargan certificados al iniciar. Después de sustituirlos, reiniciar
 
 ## Instalar el servicio en vm-whatsapp-caillaux
 
-Ejecutar en la VM después de aprobar el cambio. Reemplazar `REVISION` por el SHA completo revisado de la rama. No ejecutar sobre una copia de perfiles en Azure Files. No copiar perfiles mientras Chromium esté abierto.
+Ejecutar en la VM después de aprobar el cambio. Reemplazar `REVISION` por el SHA completo revisado de `main`. No ejecutar sobre una copia de perfiles en Azure Files. No copiar perfiles mientras Chromium esté abierto.
 
 ```bash
 set -eu
 REVISION='SHA_COMPLETO_REVISADO'
-git clone --branch codex/whatsapp-vm https://github.com/alejandro-javier-ds/gestion-oficina.git /tmp/gestion-oficina-worker
+git clone --branch main https://github.com/alejandro-javier-ds/gestion-oficina.git /tmp/gestion-oficina-worker
 cd /tmp/gestion-oficina-worker
 git checkout --detach "$REVISION"
 test "$(git rev-parse HEAD)" = "$REVISION"
@@ -156,7 +156,7 @@ En Container Apps, agregar tres secretos con el contenido de `ca.crt`, `client.c
 
 El puerto de ingreso del CRM permanece en 3000. No desactivar validación de certificados ni usar `NODE_TLS_REJECT_UNAUTHORIZED=0`. El servidor tiene SAN para la IP privada; no reemplazar la URL por un nombre DNS sin emitir un certificado con ese SAN.
 
-Desplegar la imagen del CRM construida con este mismo SHA por el flujo habitual, sin activar tráfico antes de probar conectividad HTTPS con mTLS desde su red. GitHub Actions actual construye y publica únicamente la imagen del CRM cuando se integra en `main`; la imagen del worker se construye manualmente arriba. Un push a esta rama no publica imágenes en ACR ni despliega revisiones.
+Desplegar la imagen del CRM construida con este mismo SHA por el flujo habitual, sin activar tráfico antes de probar conectividad HTTPS con mTLS desde su red. GitHub Actions actual construye y publica únicamente la imagen del CRM cuando se integra en `main`; la imagen del worker se construye manualmente arriba. La publicación de la imagen en ACR no despliega revisiones automáticamente.
 
 En la consola de la nueva revisión del CRM, comprobar la conectividad privada sin abrir Chromium ni leer perfiles:
 
