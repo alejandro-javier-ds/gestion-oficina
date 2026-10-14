@@ -13,6 +13,7 @@ import { CheckCircle2, Loader2, MessageSquareText, Users } from "lucide-react";
 import type { ClienteWhatsapp } from "./FilaClienteWhatsapp";
 
 import VistaPreviaWhatsapp from "./VistaPreviaWhatsapp";
+import type { ReactNode } from "react";
 
 type Props = {
   abierto: boolean;
@@ -58,6 +59,12 @@ type Props = {
   onConfirmar: () => void | Promise<void>;
 
   onCerrar: () => void;
+  modoBorrador?: boolean;
+  telefonosElegidos?: Record<string, string[]>;
+  selectorTelefonos?: ReactNode;
+  advertencias?: ReactNode;
+  error?: string;
+  puedeEnviar?: boolean;
 };
 
 export default function RevisionEnvioWhatsapp({
@@ -82,6 +89,12 @@ export default function RevisionEnvioWhatsapp({
   onCerrarPreview,
   onConfirmar,
   onCerrar,
+  modoBorrador = false,
+  telefonosElegidos,
+  selectorTelefonos,
+  advertencias,
+  error,
+  puedeEnviar = true,
 }: Props) {
   if (!abierto) {
     return null;
@@ -91,7 +104,7 @@ export default function RevisionEnvioWhatsapp({
 
   const puedeConfirmar =
     !enviando &&
-    campanaId !== null &&
+    (campanaId !== null || modoBorrador) &&
     seleccionados.length > 0 &&
     preparados > 0 &&
     clientes.length > 0;
@@ -149,9 +162,7 @@ export default function RevisionEnvioWhatsapp({
             <div>
               <p className="whatsapp-label">Destinatarios</p>
 
-              <p className="mt-1 text-base font-semibold">
-                {seleccionados.length}
-              </p>
+              <p className="mt-1 text-base font-semibold">{preparados}</p>
             </div>
 
             <div>
@@ -192,6 +203,18 @@ export default function RevisionEnvioWhatsapp({
             </div>
           </div>
 
+          {advertencias && (
+            <div className="px-4 py-3 sm:px-5">{advertencias}</div>
+          )}
+          {error && (
+            <p
+              role="alert"
+              className="mx-4 my-3 text-sm"
+              style={{ color: "var(--color-error)" }}
+            >
+              {error}
+            </p>
+          )}
           <div className="grid min-h-[620px] lg:grid-cols-[minmax(340px,0.8fr)_minmax(0,1.2fr)]">
             <div
               className="border-b p-4 lg:border-b-0 lg:border-r sm:p-5"
@@ -321,6 +344,12 @@ export default function RevisionEnvioWhatsapp({
                                   ? `${mensaje.length} caracteres`
                                   : "Sin mensaje"}
                               </p>
+                              {telefonosElegidos && (
+                                <p className="mt-1 text-xs">
+                                  {telefonosElegidos[cliente.id]?.join(" · ") ||
+                                    "Sin teléfonos seleccionados"}
+                                </p>
+                              )}
                             </div>
                           </div>
                         </button>
@@ -332,6 +361,17 @@ export default function RevisionEnvioWhatsapp({
             </div>
 
             <div className="p-4 sm:p-5">
+              {selectorTelefonos && (
+                <div
+                  className="mb-4 rounded border p-3"
+                  style={{ borderColor: "var(--color-borde)" }}
+                >
+                  <h3 className="mb-2 text-sm font-semibold">
+                    Editar teléfonos seleccionados
+                  </h3>
+                  {selectorTelefonos}
+                </div>
+              )}
               <VistaPreviaWhatsapp
                 cliente={clienteActivo}
                 numeroSalida={numeroSalida}
@@ -374,7 +414,7 @@ export default function RevisionEnvioWhatsapp({
               >
                 {campanaId
                   ? `Campaña #${campanaId} lista para confirmar.`
-                  : "La campaña todavía no tiene un identificador guardado."}
+                  : "La selección y los mensajes se guardarán al confirmar."}
               </p>
             </div>
 
@@ -389,8 +429,10 @@ export default function RevisionEnvioWhatsapp({
                   <Loader2 size={15} className="animate-spin" />
                   Enviando campaña...
                 </span>
-              ) : (
+              ) : puedeEnviar ? (
                 "Confirmar campaña"
+              ) : (
+                "Guardar selección"
               )}
             </button>
           </div>

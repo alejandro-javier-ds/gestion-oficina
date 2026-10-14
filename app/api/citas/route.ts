@@ -17,6 +17,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { consultarFilas, consultarUno } from "@/lib/postgres";
 
 import { leerSesionActual } from "@/lib/auth";
+import { fechaActualLima } from "@/lib/fecha-lima";
 
 export const runtime = "nodejs";
 
@@ -151,7 +152,7 @@ export async function POST(request: NextRequest) {
   let fechaFinal: string;
 
   if (tipo === "CIH") {
-    fechaFinal = new Date().toISOString().slice(0, 10);
+    fechaFinal = fechaActualLima();
   } else {
     if (!fecha_cita) {
       return NextResponse.json(

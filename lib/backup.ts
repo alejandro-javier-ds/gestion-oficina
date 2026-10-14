@@ -82,21 +82,22 @@ function obtenerConfiguracionPostgres() {
   };
 }
 
-function listarArchivosDeRespaldo() {
-  if (!fs.existsSync(CARPETA_RESPALDOS)) {
+function listarArchivosDeRespaldo(carpeta = CARPETA_RESPALDOS) {
+  if (!fs.existsSync(carpeta)) {
     return [];
   }
 
   return fs
-    .readdirSync(CARPETA_RESPALDOS)
+    .readdirSync(carpeta)
     .filter(
       (archivo) =>
         archivo.startsWith("gestion-oficina_") && archivo.endsWith(".dump"),
     )
     .map((nombre) => {
-      const ruta = path.join(CARPETA_RESPALDOS, nombre);
+      const ruta = path.join(carpeta, nombre);
 
-      const stats = fs.statSync(ruta);
+      const stats = fs.lstatSync(ruta);
+      if (!stats.isFile()) return null;
 
       return {
         nombre,
@@ -105,20 +106,51 @@ function listarArchivosDeRespaldo() {
         fechaModificacion: stats.mtime.getTime(),
       };
     })
+    .filter((archivo): archivo is NonNullable<typeof archivo> => archivo !== null)
     .sort((a, b) => b.fechaModificacion - a.fechaModificacion);
 }
 
-function rotarRespaldosViejos() {
-  const archivos = listarArchivosDeRespaldo();
+export async function rotarRespaldosViejos(
+  carpeta = CARPETA_RESPALDOS,
+  conservar = RESPALDOS_A_CONSERVAR,
+  copiar = copiarRespaldoABlob,
+) {
+  const archivos = listarArchivosDeRespaldo(carpeta);
 
-  if (archivos.length <= RESPALDOS_A_CONSERVAR) {
+  if (archivos.length <= conservar) {
     return;
   }
 
-  const archivosAEliminar = archivos.slice(RESPALDOS_A_CONSERVAR);
+  const archivosAEliminar = archivos.slice(conservar);
 
   for (const archivo of archivosAEliminar) {
-    fs.unlinkSync(archivo.ruta);
+    try {
+      await copiar(archivo.ruta);
+    } catch (error) {
+      const datos = error as { code?: unknown; statusCode?: unknown } | null;
+      const codigo = datos?.code;
+      const estado = datos?.statusCode;
+      console.error(
+        `[backup] Se conserva ${archivo.nombre}; no hay copia Blob verificada.`,
+        {
+          codigo:
+            typeof codigo === "string" && /^[a-zA-Z0-9_]{1,80}$/.test(codigo)
+              ? codigo
+              : "BlobUploadFailed",
+          estadoHttp: typeof estado === "number" ? estado : undefined,
+        },
+      );
+      continue;
+    }
+
+    try {
+      fs.unlinkSync(archivo.ruta);
+    } catch (error) {
+      console.error(`[backup] No se pudo rotar ${archivo.nombre}.`, {
+        codigo: (error as NodeJS.ErrnoException).code ?? "FileDeleteFailed",
+      });
+      continue;
+    }
 
     console.log(`[backup] Respaldo antiguo eliminado: ${archivo.nombre}`);
   }
@@ -131,7 +163,12 @@ export async function crearRespaldoBaseDatos(): Promise<{
   if (!fs.existsSync(CARPETA_RESPALDOS)) {
     fs.mkdirSync(CARPETA_RESPALDOS, {
       recursive: true,
+      mode: 0o700,
     });
+  }
+  const carpetaStats = fs.lstatSync(CARPETA_RESPALDOS);
+  if (!carpetaStats.isDirectory()) {
+    throw new Error("La carpeta de respaldos debe ser un directorio local seguro.");
   }
 
   const { host, puerto, usuario, password, baseDatos, sslMode } =
@@ -139,7 +176,10 @@ export async function crearRespaldoBaseDatos(): Promise<{
 
   const nombreArchivo = `gestion-oficina_${formatearFechaParaNombre()}_${randomUUID()}.dump`;
 
+  const rutaTemporal = path.join(CARPETA_RESPALDOS, `${nombreArchivo}.partial`);
   const rutaDestino = path.join(CARPETA_RESPALDOS, nombreArchivo);
+  const descriptorTemporal = fs.openSync(rutaTemporal, "wx", 0o600);
+  fs.closeSync(descriptorTemporal);
 
   /*
    * Si PostgreSQL no está en PATH,
@@ -172,7 +212,7 @@ export async function crearRespaldoBaseDatos(): Promise<{
     "--no-privileges",
 
     "--file",
-    rutaDestino,
+    rutaTemporal,
   ];
 
   const entorno: NodeJS.ProcessEnv = {
@@ -197,24 +237,29 @@ export async function crearRespaldoBaseDatos(): Promise<{
      * incompleto, no lo dejamos como backup válido.
      */
 
-    if (fs.existsSync(rutaDestino)) {
-      fs.unlinkSync(rutaDestino);
+    if (fs.existsSync(rutaTemporal)) {
+      fs.unlinkSync(rutaTemporal);
     }
 
     throw error;
   }
 
-  if (!fs.existsSync(rutaDestino)) {
+  if (!fs.existsSync(rutaTemporal)) {
     throw new Error("pg_dump terminó sin crear el archivo de respaldo.");
   }
 
-  const stats = fs.statSync(rutaDestino);
+  const stats = fs.statSync(rutaTemporal);
 
   if (stats.size === 0) {
-    fs.unlinkSync(rutaDestino);
+    fs.unlinkSync(rutaTemporal);
 
     throw new Error("pg_dump generó un respaldo vacío.");
   }
+
+  fs.chmodSync(rutaTemporal, 0o600);
+  fs.linkSync(rutaTemporal, rutaDestino);
+  fs.unlinkSync(rutaTemporal);
+  const statsFinales = fs.statSync(rutaDestino);
 
   try {
     const resultado = await copiarRespaldoABlob(rutaDestino);
@@ -234,9 +279,9 @@ export async function crearRespaldoBaseDatos(): Promise<{
     );
   }
 
-  rotarRespaldosViejos();
+  await rotarRespaldosViejos();
 
-  const tamanoMB = Number((stats.size / (1024 * 1024)).toFixed(2));
+  const tamanoMB = Number((statsFinales.size / (1024 * 1024)).toFixed(2));
 
   return {
     nombre: nombreArchivo,

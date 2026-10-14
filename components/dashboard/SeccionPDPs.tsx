@@ -15,6 +15,7 @@ import SelectorRangoFecha, {
   type RangoFecha,
 } from "./SelectorRangoFecha";
 import ModalEditarPromesa, { PromesaParaEditar } from "../ModalEditarPromesa";
+import { formatearFechaCalendarioLima } from "@/lib/fecha-lima";
 
 type FilaFeed = {
   id: number;
@@ -147,9 +148,7 @@ function tiempoTranscurrido(iso: string): string {
 }
 
 function formatearFechaCorta(iso: string): string {
-  const fecha = new Date(iso);
-  if (isNaN(fecha.getTime())) return iso;
-  return fecha.toLocaleDateString("es-PE", {
+  return formatearFechaCalendarioLima(iso, {
     day: "2-digit",
     month: "short",
     year: "numeric",

@@ -4,7 +4,7 @@ import { X509Certificate } from "node:crypto";
 import { WebSocket, WebSocketServer } from "ws";
 import { verificarOperacion, CABECERAS_PRIVADAS, ErrorRemotoWhatsapp, UUID } from "../whatsapp-wire.mjs";
 
-export function crearServidorWhatsapp({ tls, fingerprints, operar, escritorio, disponible, intervalo = 5000 }) {
+export function crearServidorWhatsapp({ tls, fingerprints, operar, escritorio, disponible, admiteVisor = async () => true, intervalo = 5000 }) {
   const certificadoServidor = new X509Certificate(tls.cert);
   const vigente = (cert) => Date.now() >= Date.parse(cert.validFrom) && Date.now() < Date.parse(cert.validTo);
   if (!vigente(certificadoServidor)) throw new Error("El certificado del servidor requiere renovación.");
@@ -73,7 +73,7 @@ export function crearServidorWhatsapp({ tls, fingerprints, operar, escritorio, d
     let transferida = false;
     try {
       const certificado = peer(request);
-      if (cerrando || !await disponible() || request.headers.origin) throw new ErrorRemotoWhatsapp("VISOR_PRIVADO", "Acceso no permitido.", 403);
+      if (cerrando || !await disponible() || !await admiteVisor() || request.headers.origin) throw new ErrorRemotoWhatsapp("VISOR_PRIVADO", "Acceso no permitido.", 403);
       const url = new URL(request.url, "https://localhost");
       const numero = url.searchParams.get("numero");
       const id = url.searchParams.get("id");
@@ -91,7 +91,7 @@ export function crearServidorWhatsapp({ tls, fingerprints, operar, escritorio, d
         tcp.once("connect", resolve); tcp.once("error", reject); tcp.once("close", () => reject(new Error("Visor cerrado")));
       });
       const actualizado = await escritorio(numero, id, actor);
-      if (cerrando || !await disponible()) throw new Error("Visor cerrado");
+      if (cerrando || !await disponible() || !await admiteVisor()) throw new Error("Visor cerrado");
       if (actualizado.puerto !== acceso.puerto || tcp.destroyed || socket.destroyed) throw new Error("Visor cerrado");
       tcp.setTimeout(0);
       wsServer.handleUpgrade(request, socket, head, (ws) => {
@@ -134,6 +134,7 @@ export function crearServidorWhatsapp({ tls, fingerprints, operar, escritorio, d
   });
   return {
     servidor,
+    cerrarVisores() { for (const ws of visores.keys()) ws.terminate(); },
     detenerIngreso() { cerrando = true; for (const ws of visores.keys()) ws.terminate(); },
     async cerrar() {
       cerrando = true;

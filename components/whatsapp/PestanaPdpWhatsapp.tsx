@@ -1,122 +1,52 @@
-// components/whatsapp/PestanaPdpWhatsapp.tsx
-// Flujo completo de WhatsApp Masivo para PDPs.
-
 "use client";
 
-import { useEffect, useState } from "react";
-
-import { HandCoins } from "lucide-react";
-
+import { useCallback, useEffect, useState } from "react";
+import { useSesion } from "@/components/SesionProvider";
 import SelectorRangoWhatsapp, {
   type RangoWhatsapp,
 } from "./SelectorRangoWhatsapp";
-
 import SelectorGestorWhatsapp from "./SelectorGestorWhatsapp";
-
 import SelectorNumeroSalida from "./SelectorNumeroSalida";
-
 import CampanasPdpWhatsapp from "./CampanasPdpWhatsapp";
-
 import BarraClientesWhatsapp from "./BarraClientesWhatsapp";
-
 import TablaClientesPdpWhatsapp, {
   type ClientePdp,
 } from "./TablaClientesPdpWhatsapp";
-
 import VistaPreviaWhatsapp from "./VistaPreviaWhatsapp";
-
 import ResumenEnvioWhatsapp from "./ResumenEnvioWhatsapp";
-
 import EstadoEnvioWhatsapp from "./EstadoEnvioWhatsapp";
-
 import RevisionEnvioWhatsapp from "./RevisionEnvioWhatsapp";
-
+import SeleccionTelefonosWhatsapp, {
+  telefonosElegiblesWhatsapp,
+} from "./SeleccionTelefonosWhatsapp";
+import {
+  ControlSeguimientoWhatsapp,
+  ConfirmarSeguimientosWhatsapp,
+} from "./ControlSeguimientoWhatsapp";
 import type { ClienteWhatsapp } from "./FilaClienteWhatsapp";
-
+import type { CampanaGuardadaWhatsapp } from "@/lib/whatsapp/campanas";
+import type { FiltroSeguimientoWhatsapp } from "@/lib/whatsapp/seguimiento";
 import {
   obtenerPlantillaPdp,
   obtenerSaludoGestorPdp,
   reemplazarVariablesPdp,
   type CampanaPdpWhatsapp,
 } from "@/lib/whatsapp/plantillas-pdp";
-
 import { useWhatsappSeleccion } from "@/hooks/useWhatsappSeleccion";
-
-type RespuestaPdp = {
-  total: number;
-  clientes: ClientePdp[];
-};
-
-type MensajesIndividuales = Record<string, string>;
-
-type NumeroWhatsappRegistrado = {
-  numero: string;
-  propietario: string;
-  propietarioTipo?: string;
-  activo?: number;
-};
-
-function normalizarTextoWhatsapp(valor: string): string {
-  return valor
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, " ");
-}
-
-type DestinatarioHistorial = {
-  idc: string;
-  cliente: string;
-  gestor: string | null;
-  telefonoDestino: string;
-  tipoTelefono: string;
-  estado: string;
-  error: string | null;
-  mensaje: string;
-  tenor?: string | null;
-};
-
-function obtenerHoyLocal(): string {
-  const fecha = new Date();
-
-  const year = fecha.getFullYear();
-
-  const month = String(fecha.getMonth() + 1).padStart(2, "0");
-
-  const day = String(fecha.getDate()).padStart(2, "0");
-
-  return `${year}-${month}-${day}`;
-}
-
-function obtenerInicioMesLocal(): string {
-  const fecha = new Date();
-
-  const year = fecha.getFullYear();
-
-  const month = String(fecha.getMonth() + 1).padStart(2, "0");
-
-  return `${year}-${month}-01`;
-}
-
-function rangoInicialPdp(): RangoWhatsapp {
-  return {
-    desde: obtenerInicioMesLocal(),
-
-    hasta: obtenerHoyLocal(),
-
-    etiqueta: "Este mes",
-  };
-}
-
+import { useWhatsappTelefonos } from "@/hooks/useWhatsappTelefonos";
+import { useWhatsappCampana } from "@/hooks/useWhatsappCampana";
 const STATUS_PDP: Record<CampanaPdpWhatsapp, string> = {
   posible_pago: "Posible Pago",
-
   cien_confiable: "100% Confiable",
-
   fin_acuerdo: "Fin de Acuerdo",
 };
-
+const hoy = () =>
+  new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Lima",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
 function adaptarClientePdp(cliente: ClientePdp): ClienteWhatsapp {
   return {
     id: cliente.id,
@@ -151,6 +81,7 @@ function adaptarClientePdp(cliente: ClientePdp): ClienteWhatsapp {
       qtty_phone_ranking: telefono.qtty_phone_ranking,
     })),
 
+    seguimiento: cliente.seguimiento,
     pdp: {
       statusPdp: cliente.statusPdp,
 
@@ -186,1136 +117,613 @@ function formatearMontoPdp(cliente: ClientePdp): string {
 }
 
 export default function PestanaPdpWhatsapp() {
-  const [rango, setRango] = useState<RangoWhatsapp>(rangoInicialPdp());
-
-  const [campana, setCampana] = useState<CampanaPdpWhatsapp>("posible_pago");
-
-  const [gestor, setGestor] = useState("");
-
-  const [numeroSalida, setNumeroSalida] = useState("");
-
-  const [numerosWhatsappRegistrados, setNumerosWhatsappRegistrados] = useState<
-    NumeroWhatsappRegistrado[]
-  >([]);
-
-  useEffect(() => {
-    let activo = true;
-
-    async function cargarNumerosWhatsapp() {
-      try {
-        const response = await fetch("/api/whatsapp/playwright/estados", {
-          cache: "no-store",
-        });
-
-        if (!response.ok) {
-          return;
-        }
-
-        const data = (await response.json()) as {
-          numeros?: NumeroWhatsappRegistrado[];
-        };
-
-        if (activo) {
-          setNumerosWhatsappRegistrados(data.numeros ?? []);
-        }
-      } catch {
-        if (activo) {
-          setNumerosWhatsappRegistrados([]);
-        }
-      }
-    }
-
-    void cargarNumerosWhatsapp();
-
-    const intervalo = window.setInterval(() => {
-      void cargarNumerosWhatsapp();
-    }, 10_000);
-
-    return () => {
-      activo = false;
-      window.clearInterval(intervalo);
-    };
-  }, []);
-
-  function obtenerNumeroContactoGestor(gestorCliente: string): string {
-    const gestorNormalizado = normalizarTextoWhatsapp(gestorCliente);
-
-    if (!gestorNormalizado) {
-      return "";
-    }
-
-    const numero = numerosWhatsappRegistrados.find(
-      (item) =>
-        item.activo !== 0 &&
-        normalizarTextoWhatsapp(item.propietario) === gestorNormalizado,
-    );
-
-    return numero?.numero ?? "";
-  }
-
-  function obtenerSalidaSeleccionada(): NumeroWhatsappRegistrado | null {
-    const numeroNormalizado = normalizarTextoWhatsapp(numeroSalida);
-
-    if (!numeroNormalizado) {
-      return null;
-    }
-
-    return (
-      numerosWhatsappRegistrados.find(
-        (item) =>
-          item.activo !== 0 &&
-          normalizarTextoWhatsapp(item.numero) === numeroNormalizado,
-      ) ?? null
-    );
-  }
-
-  const [busqueda, setBusqueda] = useState("");
-
-  const [clientes, setClientes] = useState<ClientePdp[]>([]);
-
-  const [total, setTotal] = useState(0);
-
-  const [cargando, setCargando] = useState(true);
-
-  const [error, setError] = useState("");
-
-  const [tenor, setTenor] = useState(obtenerPlantillaPdp("posible_pago"));
-
-  const [telefonosSeleccionados, setTelefonosSeleccionados] = useState<
-    Record<string, string>
-  >({});
-
-  const [telefonosManuales, setTelefonosManuales] = useState<
-    Record<string, string>
-  >({});
-
-  const [usarTelefonoManual, setUsarTelefonoManual] = useState<
-    Record<string, boolean>
-  >({});
-
-  const [campanaId, setCampanaId] = useState<number | null>(null);
-
-  const [enviandoCampana, setEnviandoCampana] = useState(false);
-
+  const { sesion } = useSesion();
+  const [rango, setRango] = useState<RangoWhatsapp>(() => ({
+    desde: hoy().slice(0, 7) + "-01",
+    hasta: hoy(),
+    etiqueta: "Este mes",
+  }));
+  const [propuesta, setPropuesta] =
+      useState<CampanaPdpWhatsapp>("posible_pago"),
+    [gestor, setGestor] = useState(""),
+    [numeroSalida, setNumeroSalida] = useState(""),
+    [busqueda, setBusqueda] = useState("");
+  const [clientes, setClientes] = useState<ClientePdp[]>([]),
+    [cargando, setCargando] = useState(true),
+    [error, setError] = useState(""),
+    [version, setVersion] = useState(0);
+  const [seguida, setSeguida] = useState<CampanaGuardadaWhatsapp | null>(null),
+    [filtro, setFiltro] = useState<FiltroSeguimientoWhatsapp>("TODOS");
+  const [tenor, setTenor] = useState(obtenerPlantillaPdp("posible_pago")),
+    [clientesPreparados, setClientesPreparados] = useState<ClienteWhatsapp[]>(
+      [],
+    ),
+    [mensajesIndividuales, setMensajesIndividuales] = useState<
+      Record<string, string>
+    >({});
+  const [clienteRevision, setClienteRevision] =
+      useState<ClienteWhatsapp | null>(null),
+    [clienteVista, setClienteVista] = useState<ClientePdp | null>(null);
+  const [revisionAbierta, setRevisionAbierta] = useState(false),
+    [estadoAbierto, setEstadoAbierto] = useState(false),
+    [modalAbierto, setModalAbierto] = useState(false),
+    [errorAccion, setErrorAccion] = useState("");
   const {
     seleccionados,
     cantidad: cantidadSeleccionados,
     toggle,
     toggleMuchos,
+    seleccionar,
+    limpiar,
     obtenerMetadata,
   } = useWhatsappSeleccion();
-
-  const [clientesPreparados, setClientesPreparados] = useState<
-    ClienteWhatsapp[]
-  >([]);
-
-  const [mensajesIndividuales, setMensajesIndividuales] =
-    useState<MensajesIndividuales>({});
-
-  const [clienteRevision, setClienteRevision] =
-    useState<ClienteWhatsapp | null>(null);
-
-  const [revisionAbierta, setRevisionAbierta] = useState(false);
-
-  const [estadoAbierto, setEstadoAbierto] = useState(false);
-
-  const [preparando, setPreparando] = useState(false);
-
-  const [procesados, setProcesados] = useState(0);
-
-  const [preparados, setPreparados] = useState(0);
-
-  const [sinTelefono, setSinTelefono] = useState(0);
-
-  const [fallidos, setFallidos] = useState(0);
-
-  const [modalAbierto, setModalAbierto] = useState(false);
-
-  const [clienteVista, setClienteVista] = useState<ClientePdp | null>(null);
-
-  const statusPdp = STATUS_PDP[campana];
-
-  function cambiarCampana(nueva: CampanaPdpWhatsapp) {
-    setCampana(nueva);
-
-    setTenor(obtenerPlantillaPdp(nueva));
-
-    setBusqueda("");
-
-    setClienteVista(null);
-
-    setClienteRevision(null);
-
-    setClientesPreparados([]);
-
-    setMensajesIndividuales({});
-
-    setRevisionAbierta(false);
-
-    setEstadoAbierto(false);
-
-    setModalAbierto(false);
-  }
-
-  function cambiarGestor(nuevoGestor: string) {
-    setGestor(nuevoGestor);
-
-    setBusqueda("");
-
-    setClienteVista(null);
-
-    setClienteRevision(null);
-
-    setModalAbierto(false);
-
-    setTelefonosSeleccionados({});
-
-    setTelefonosManuales({});
-
-    setUsarTelefonoManual({});
-  }
-
-  function cambiarRango(nuevoRango: RangoWhatsapp) {
-    setRango(nuevoRango);
-
-    setClienteVista(null);
-
-    setClienteRevision(null);
-
-    setModalAbierto(false);
-
-    setTelefonosSeleccionados({});
-
-    setTelefonosManuales({});
-
-    setUsarTelefonoManual({});
-  }
-
+  const telefonos = useWhatsappTelefonos();
+  const statusPdp = STATUS_PDP[propuesta];
+  const puedeEnviar =
+    sesion?.rol === "administrador" || sesion?.rol === "supervisor";
   useEffect(() => {
-    let cancelado = false;
-
-    async function cargarClientes() {
-      setCargando(true);
-
-      setError("");
-
+    const controller = new AbortController();
+    let pendiente = false;
+    let primera = true;
+    const params = new URLSearchParams({
+      statusPdp,
+      desde: rango.desde,
+      hasta: rango.hasta,
+      seguimiento: filtro,
+    });
+    if (gestor) params.set("gestor", gestor);
+    if (busqueda.trim()) params.set("q", busqueda.trim());
+    if (seguida) params.set("campanaId", String(seguida.id));
+    async function cargar() {
+      if (pendiente || controller.signal.aborted) return;
+      pendiente = true;
+      if (primera) {
+        setCargando(true);
+        primera = false;
+      }
       try {
-        const params = new URLSearchParams();
-
-        params.set("statusPdp", statusPdp);
-
-        params.set("desde", rango.desde);
-
-        params.set("hasta", rango.hasta);
-
-        if (gestor) {
-          params.set("gestor", gestor);
-        }
-
-        if (busqueda.trim()) {
-          params.set("q", busqueda.trim());
-        }
-
-        const response = await fetch(
-          `/api/whatsapp/pdps?${params.toString()}`,
-          {
+        const r = await fetch("/api/whatsapp/pdps?" + params, {
             cache: "no-store",
-          },
-        );
-
-        const data = (await response.json().catch(() => null)) as
-          | RespuestaPdp
-          | {
-              error?: string;
-            }
-          | null;
-
-        if (!response.ok) {
-          throw new Error(
-            data && "error" in data
-              ? (data.error ?? "No se pudieron cargar los clientes PDP.")
-              : "No se pudieron cargar los clientes PDP.",
+            signal: controller.signal,
+          }),
+          d = await r.json();
+        if (!r.ok) throw new Error(d.error ?? "No se pudieron cargar las PDP.");
+        if (!controller.signal.aborted) {
+          setClientes(d.clientes ?? []);
+          setError("");
+        }
+      } catch (e) {
+        if (!controller.signal.aborted) {
+          setClientes([]);
+          setError(
+            e instanceof Error ? e.message : "No se pudieron cargar las PDP.",
           );
         }
-
-        if (cancelado) {
-          return;
-        }
-
-        const resultado = data as RespuestaPdp;
-
-        setClientes(
-          Array.isArray(resultado.clientes) ? resultado.clientes : [],
-        );
-
-        setTotal(resultado.total ?? 0);
-      } catch (errorCarga) {
-        if (cancelado) {
-          return;
-        }
-
-        console.error("Error cargando PDPs:", errorCarga);
-
-        setClientes([]);
-
-        setTotal(0);
-
-        setError(
-          errorCarga instanceof Error
-            ? errorCarga.message
-            : "No se pudieron cargar los clientes PDP.",
-        );
       } finally {
-        if (!cancelado) {
-          setCargando(false);
-        }
+        pendiente = false;
+        if (!controller.signal.aborted) setCargando(false);
       }
     }
-
-    void cargarClientes();
-
+    const timer = setTimeout(() => void cargar(), 300),
+      intervalo = seguida ? setInterval(() => void cargar(), 3000) : null;
     return () => {
-      cancelado = true;
+      controller.abort();
+      clearTimeout(timer);
+      if (intervalo) clearInterval(intervalo);
     };
-  }, [statusPdp, gestor, busqueda, rango.desde, rango.hasta]);
-
-  const clientesVisibles = clientes.slice(0, 10);
-
-  const idsClientes = clientes.map((cliente) => cliente.id);
-
-  const todosSeleccionados =
-    clientes.length > 0 &&
-    idsClientes.every((id) => seleccionados.includes(id));
-
-  function seleccionarTodos() {
-    const metadataPorId: Record<
-      string,
-      {
-        campana: string;
-        cliente?: unknown;
-      }
-    > = {};
-
-    for (const cliente of clientes) {
-      metadataPorId[cliente.id] = {
-        campana,
-        cliente,
-      };
-    }
-
-    toggleMuchos(idsClientes, metadataPorId);
-  }
-
-  function cambiarTelefono(id: string, telefonoId: string) {
-    setUsarTelefonoManual((actuales) => ({
-      ...actuales,
-      [id]: false,
-    }));
-
-    setTelefonosSeleccionados((actuales) => ({
-      ...actuales,
-      [id]: telefonoId,
-    }));
-  }
-
-  function cambiarTelefonoManual(id: string, valor: string) {
-    const limpio = valor.replace(/\D/g, "").replace(/^51/, "").slice(0, 9);
-
-    setTelefonosManuales((actuales) => ({
-      ...actuales,
-      [id]: limpio,
-    }));
-  }
-
-  function usarManual(id: string) {
-    setUsarTelefonoManual((actuales) => ({
-      ...actuales,
-      [id]: true,
-    }));
-  }
-
-  function volverRegistrado(id: string) {
-    setUsarTelefonoManual((actuales) => ({
-      ...actuales,
-      [id]: false,
-    }));
-  }
-
-  function obtenerTelefonoDestino(cliente: ClientePdp): string {
-    const usaManual = usarTelefonoManual[cliente.id] ?? false;
-
-    if (usaManual) {
-      return telefonosManuales[cliente.id] ?? "";
-    }
-
-    const telefonoElegido = telefonosSeleccionados[cliente.id];
-
-    if (telefonoElegido) {
-      return (
-        cliente.telefonos.find(
-          (telefono) => String(telefono.id_phone) === telefonoElegido,
-        )?.phone ?? ""
-      );
-    }
-
+  }, [
+    statusPdp,
+    rango.desde,
+    rango.hasta,
+    gestor,
+    busqueda,
+    seguida,
+    version,
+    filtro,
+  ]);
+  function clientePdp(c: ClienteWhatsapp): ClientePdp {
+    const actual =
+      clientes.find((p) => p.id === c.id || p.idc === c.idc) ??
+      (obtenerMetadata(c.id)?.cliente as ClientePdp | undefined);
     return (
-      cliente.telefonos.find(
-        (telefono) =>
-          telefono.activo === 1 &&
-          telefono.tipo_telefono.toLowerCase() === "celular",
-      )?.phone ?? ""
+      actual ?? {
+        id: c.id,
+        idc: c.idc,
+        cliente: c.cliente,
+        gestor: c.gestor,
+        statusPdp: null,
+        tipo: "",
+        moneda: "PEN",
+        montoPdp: null,
+        montoDolares: null,
+        fechaPdp: "",
+        estadoPdp: "",
+        fechaRegistro: c.ultimaGestion,
+        telefonos: c.telefonos,
+        telefonoPredeterminado: "",
+        seguimiento: c.seguimiento,
+      }
     );
   }
-
-  function generarMensajeCliente(
-    cliente: ClientePdp,
-    plantilla: string = tenor,
-  ): string {
-    const gestorCliente = cliente.gestor ?? "";
-
-    const numeroContactoGestor = obtenerNumeroContactoGestor(gestorCliente);
-
+  function generarMensajeCliente(c: ClienteWhatsapp, plantilla: string) {
+    const p = clientePdp(c),
+      gestorCliente = p.gestor ?? "",
+      salida = telefonos.numerosWhatsappRegistrados.find(
+        (n) => n.numero === numeroSalida,
+      );
     return reemplazarVariablesPdp(plantilla, {
-      cliente: cliente.cliente,
-
+      cliente: p.cliente,
       gestor: gestorCliente,
-
-      numeroSalida: numeroSalida,
-
-      numeroContactoGestor: numeroContactoGestor,
-
+      numeroSalida,
+      numeroContactoGestor:
+        telefonos.obtenerNumeroContactoGestor(gestorCliente),
       saludoGestor: obtenerSaludoGestorPdp(
         gestorCliente,
-        obtenerSalidaSeleccionada()?.propietario,
-        obtenerSalidaSeleccionada()?.propietarioTipo,
+        salida?.propietario,
+        salida?.propietarioTipo,
       ),
-
-      montoPdp: formatearMontoPdp(cliente),
-
-      fechaPdp: cliente.fechaPdp,
+      montoPdp: formatearMontoPdp(p),
+      fechaPdp: p.fechaPdp,
     });
   }
-
-  function generarMensajesParaTodos(
-    lista: ClientePdp[],
-    plantilla: string = tenor,
-  ): MensajesIndividuales {
-    const mensajes: MensajesIndividuales = {};
-
-    lista.forEach((cliente) => {
-      const metadata = obtenerMetadata(cliente.id);
-
-      const campanaCliente = metadata?.campana;
-
-      const plantillaCliente = campanaCliente
-        ? obtenerPlantillaPdp(campanaCliente as CampanaPdpWhatsapp)
-        : plantilla;
-
-      mensajes[cliente.id] = generarMensajeCliente(cliente, plantillaCliente);
-    });
-
-    return mensajes;
-  }
-
-  function aplicarMensajeATodos() {
-    const nuevosMensajes: MensajesIndividuales = {};
-
-    for (const id of seleccionados) {
-      const metadata = obtenerMetadata(id);
-
-      const clientePdp = metadata?.cliente as ClientePdp | undefined;
-
-      if (!clientePdp) {
-        continue;
-      }
-
-      const campanaCliente = metadata?.campana;
-
-      const plantillaCliente = campanaCliente
-        ? obtenerPlantillaPdp(campanaCliente as CampanaPdpWhatsapp)
-        : tenor;
-
-      nuevosMensajes[id] = generarMensajeCliente(clientePdp, plantillaCliente);
-    }
-
-    setMensajesIndividuales(nuevosMensajes);
-  }
-
-  function obtenerNombreCampanaHistorial(
-    campanasSeleccionadas: Array<string | undefined>,
-  ): string {
-    const unicas = Array.from(new Set(campanasSeleccionadas.filter(Boolean)));
-
-    if (unicas.length === 1) {
-      return STATUS_PDP[unicas[0] as CampanaPdpWhatsapp] ?? unicas[0];
-    }
-
-    return "Selección mixta";
-  }
-
-  async function prepararEnvio() {
-    if (cantidadSeleccionados === 0 || !numeroSalida) {
-      return;
-    }
-
-    setProcesados(0);
-    setPreparados(0);
-    setSinTelefono(0);
-    setFallidos(0);
-
-    setEstadoAbierto(true);
-
-    setPreparando(true);
-
-    try {
-      const clientesPorId = new Map<string, ClientePdp>();
-
-      for (const cliente of clientes) {
-        clientesPorId.set(cliente.id, cliente);
-      }
-
-      const clientesSeleccionados = seleccionados
-        .map((id) => {
-          const clienteActual = clientesPorId.get(id);
-
-          if (clienteActual) {
-            return clienteActual;
-          }
-
-          const metadata = obtenerMetadata(id);
-
-          return metadata?.cliente as ClientePdp | undefined;
-        })
-        .filter((cliente): cliente is ClientePdp => Boolean(cliente));
-
-      const preparadosLocal: ClienteWhatsapp[] = [];
-
-      const mensajes: MensajesIndividuales = {};
-
-      const destinatarios: DestinatarioHistorial[] = [];
-
-      let procesadosActuales = 0;
-
-      let preparadosActuales = 0;
-
-      let sinTelefonoActuales = 0;
-
-      let fallidosActuales = 0;
-
-      for (const cliente of clientesSeleccionados) {
-        const metadata = obtenerMetadata(cliente.id);
-
-        const campanaCliente = metadata?.campana;
-
-        const plantillaCliente = campanaCliente
-          ? obtenerPlantillaPdp(campanaCliente as CampanaPdpWhatsapp)
-          : tenor;
-
-        const mensajeFinal =
-          mensajesIndividuales[cliente.id] ??
-          generarMensajeCliente(cliente, plantillaCliente);
-
-        mensajes[cliente.id] = mensajeFinal;
-
-        try {
-          const usaManual = usarTelefonoManual[cliente.id] ?? false;
-
-          if (usaManual) {
-            const destinoManual = (telefonosManuales[cliente.id] ?? "")
-              .replace(/\D/g, "")
-              .replace(/^51/, "");
-
-            if (/^9\d{8}$/.test(destinoManual)) {
-              destinatarios.push({
-                idc: cliente.idc,
-                cliente: cliente.cliente,
-                gestor: cliente.gestor,
-                telefonoDestino: destinoManual,
-                tipoTelefono: "manual",
-                estado: "PREPARADO",
-                error: null,
-                mensaje: mensajeFinal,
-                tenor: campanaCliente ?? null,
-              });
-
-              preparadosActuales++;
-            } else {
-              destinatarios.push({
-                idc: cliente.idc,
-                cliente: cliente.cliente,
-                gestor: cliente.gestor,
-                telefonoDestino: destinoManual,
-                tipoTelefono: "manual",
-                estado: "SIN_TELEFONO",
-                error: "No tiene un celular peruano válido.",
-                mensaje: mensajeFinal,
-                tenor: campanaCliente ?? null,
-              });
-
-              sinTelefonoActuales++;
-            }
-          } else {
-            const telefonoElegido = telefonosSeleccionados[cliente.id];
-
-            const celularesActivos = cliente.telefonos.filter(
-              (telefono) =>
-                telefono.activo === 1 &&
-                telefono.tipo_telefono.toLowerCase() === "celular",
-            );
-
-            const celularesOrdenados = [...celularesActivos].sort((a, b) => {
-              const aElegido =
-                String(a.id_phone) === String(telefonoElegido ?? "");
-
-              const bElegido =
-                String(b.id_phone) === String(telefonoElegido ?? "");
-
-              if (aElegido === bElegido) {
-                return 0;
-              }
-
-              return aElegido ? -1 : 1;
-            });
-
-            const numerosUnicos = new Map<
-              string,
-              (typeof celularesOrdenados)[number]
-            >();
-
-            for (const telefono of celularesOrdenados) {
-              const numeroNormalizado = String(telefono.phone ?? "")
-                .replace(/\D/g, "")
-                .replace(/^51/, "");
-
-              if (!/^9\d{8}$/.test(numeroNormalizado)) {
-                continue;
-              }
-
-              if (!numerosUnicos.has(numeroNormalizado)) {
-                numerosUnicos.set(numeroNormalizado, telefono);
-              }
-            }
-
-            if (numerosUnicos.size === 0) {
-              destinatarios.push({
-                idc: cliente.idc,
-                cliente: cliente.cliente,
-                gestor: cliente.gestor,
-                telefonoDestino: "",
-                tipoTelefono: "",
-                estado: "SIN_TELEFONO",
-                error: "No tiene un celular peruano válido.",
-                mensaje: mensajeFinal,
-                tenor: campanaCliente ?? null,
-              });
-
-              sinTelefonoActuales++;
-            } else {
-              for (const [numero, telefono] of numerosUnicos) {
-                destinatarios.push({
-                  idc: cliente.idc,
-                  cliente: cliente.cliente,
-                  gestor: cliente.gestor,
-                  telefonoDestino: numero,
-                  tipoTelefono: telefono.tipo_telefono,
-                  estado: "PREPARADO",
-                  error: null,
-                  mensaje: mensajeFinal,
-                  tenor: campanaCliente ?? null,
-                });
-
-                preparadosActuales++;
-              }
-            }
-          }
-        } catch {
-          destinatarios.push({
-            idc: cliente.idc,
-            cliente: cliente.cliente,
-            gestor: cliente.gestor,
-            telefonoDestino: "",
-            tipoTelefono: "",
-            estado: "ERROR",
-            error: "Error al validar el destinatario.",
-            mensaje: mensajeFinal,
-            tenor: campanaCliente ?? null,
-          });
-
-          fallidosActuales++;
-        }
-
-        preparadosLocal.push(adaptarClientePdp(cliente));
-
-        procesadosActuales++;
-
-        setProcesados(procesadosActuales);
-
-        setPreparados(preparadosActuales);
-
-        setSinTelefono(sinTelefonoActuales);
-
-        setFallidos(fallidosActuales);
-
-        await new Promise((resolve) => setTimeout(resolve, 35));
-      }
-
-      const responseHistorial = await fetch("/api/whatsapp/historial", {
-        method: "POST",
-
-        headers: {
-          "Content-Type": "application/json",
-        },
-
-        body: JSON.stringify({
-          campana: `PDP - ${obtenerNombreCampanaHistorial(
-            seleccionados.map((id) => obtenerMetadata(id)?.campana),
-          )}`,
-
+  const onGuardada = (id: number) => {
+    setSeguida(
+      (actual) =>
+        actual ?? {
+          id,
+          campana: "PDP - " + statusPdp,
+          estado: "PREPARADA",
+          numero_salida: numeroSalida,
           gestor: gestor || null,
-
           desde: rango.desde,
-
           hasta: rango.hasta,
-
-          numeroSalida,
-
-          totalSeleccionados: destinatarios.length,
-
-          totalPreparados: preparadosActuales,
-
-          totalSinTelefono: sinTelefonoActuales,
-
-          totalFallidos: fallidosActuales,
-
-          destinatarios,
-        }),
-      });
-
-      if (!responseHistorial.ok) {
-        const data = (await responseHistorial.json().catch(() => null)) as {
-          error?: string;
-        } | null;
-
-        throw new Error(
-          data?.error ??
-            "La campaña PDP fue preparada pero no se pudo guardar el historial.",
-        );
-      }
-
-      const dataHistorial = (await responseHistorial.json()) as {
-        ok: boolean;
-        id: number;
-        estado: string;
-      };
-
-      if (!dataHistorial.id) {
-        throw new Error(
-          "La campaña PDP fue guardada, pero el servidor no devolvió un ID válido.",
-        );
-      }
-
-      setCampanaId(dataHistorial.id);
-
-      setClientesPreparados(preparadosLocal);
-
-      setMensajesIndividuales(mensajes);
-
-      setClienteRevision(preparadosLocal[0] ?? null);
-
-      setEstadoAbierto(false);
-
-      setRevisionAbierta(true);
-    } catch (errorPreparando) {
-      console.error("Error preparando PDP:", errorPreparando);
-
-      setFallidos((actual) => actual + 1);
-    } finally {
-      setPreparando(false);
-    }
-  }
-
-  function cambiarMensajeIndividual(id: string, nuevoMensaje: string) {
-    setMensajesIndividuales((actuales) => ({
-      ...actuales,
-      [id]: nuevoMensaje,
-    }));
-  }
-
-  function restaurarMensajeIndividual(id: string) {
-    const cliente = clientesPreparados.find((item) => item.id === id);
-
-    if (!cliente) {
-      return;
-    }
-
-    const clientePdp = clientes.find((item) => item.id === id);
-
-    if (!clientePdp) {
-      return;
-    }
-
-    const campanaCliente = obtenerMetadata(id)?.campana;
-
-    const plantillaCliente = campanaCliente
-      ? obtenerPlantillaPdp(campanaCliente as CampanaPdpWhatsapp)
-      : tenor;
-
-    setMensajesIndividuales((actuales) => ({
-      ...actuales,
-      [id]: generarMensajeCliente(clientePdp, plantillaCliente),
-    }));
-  }
-
-  async function confirmarCampaña() {
-    if (enviandoCampana) {
-      return;
-    }
-
-    if (!campanaId) {
-      console.error("[WhatsApp PDP] No existe campanaId.");
-      return;
-    }
-
-    setEnviandoCampana(true);
-    setEstadoAbierto(true);
-
-    try {
-      const response = await fetch("/api/whatsapp/enviar", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
+          fecha_creacion: new Date().toISOString(),
         },
-        body: JSON.stringify({ campanaId }),
-      });
-
-      const data = (await response.json()) as {
-        ok?: boolean;
-        error?: string;
-      };
-
-      if (!response.ok) {
-        throw new Error(data.error ?? "No se pudo enviar la campaña PDP.");
+    );
+    const url = new URL(window.location.href);
+    url.searchParams.set("campanaPdp", String(id));
+    window.history.replaceState(null, "", url);
+    setVersion((v) => v + 1);
+  };
+  const campana = useWhatsappCampana({
+    propuestaActual: "PDP - " + statusPdp,
+    rango,
+    gestor,
+    clientes: clientes.map(adaptarClientePdp),
+    seleccionados,
+    cantidadSeleccionados,
+    obtenerMetadata,
+    numeroSalida,
+    telefonosManuales: telefonos.telefonosManuales,
+    telefonosSeleccionados: telefonos.telefonosSeleccionados,
+    mensajeBase: tenor,
+    mensajesIndividuales,
+    generarMensajeCliente,
+    setClientesPreparados,
+    setMensajesIndividuales,
+    setMensajeBaseOriginal: () => {},
+    setClienteRevision,
+    setEstadoAbierto,
+    setRevisionAbierta,
+    setClienteVista: () => setClienteVista(null),
+    onError: setErrorAccion,
+    campanaSeguimientoId: seguida?.id,
+    nombreCampanaGuardada: seguida?.campana,
+    onGuardada,
+    puedeEnviar,
+    onFinalizar: () => {
+      setVersion((v) => v + 1);
+      limpiar();
+      telefonos.limpiarTelefonos();
+    },
+    resolverClientes: async () => {
+      const mapa = new Map(clientes.map((c) => [c.id, c]));
+      const tipos = [
+        ...new Set(
+          seleccionados
+            .map((id) => obtenerMetadata(id)?.campana)
+            .filter(Boolean),
+        ),
+      ];
+      for (const tipo of tipos) {
+        const params = new URLSearchParams({
+          statusPdp: STATUS_PDP[tipo as CampanaPdpWhatsapp],
+          desde: rango.desde,
+          hasta: rango.hasta,
+        });
+        if (gestor) params.set("gestor", gestor);
+        if (seguida) params.set("campanaId", String(seguida.id));
+        const r = await fetch("/api/whatsapp/pdps?" + params, {
+            cache: "no-store",
+          }),
+          d = await r.json();
+        if (!r.ok)
+          throw new Error(d.error ?? "No se pudieron validar las PDP.");
+        for (const c of d.clientes as ClientePdp[]) mapa.set(c.id, c);
       }
-
-      setRevisionAbierta(false);
-      setClienteRevision(null);
-      setClienteVista(null);
-      setEstadoAbierto(false);
-    } catch (errorEnvio) {
-      console.error("[WhatsApp PDP] Error enviando campaña:", errorEnvio);
-    } finally {
-      setEnviandoCampana(false);
-    }
+      return seleccionados
+        .map((id) => mapa.get(id))
+        .filter((c): c is ClientePdp => !!c)
+        .map(adaptarClientePdp);
+    },
+    plantillaCliente: (c) => {
+      const tipo = obtenerMetadata(c.id)?.campana;
+      return tipo ? obtenerPlantillaPdp(tipo as CampanaPdpWhatsapp) : tenor;
+    },
+    adaptarClientesGuardados: (lista) =>
+      lista.map((c) => {
+        const p = clientes.find((p) => p.idc === c.idc);
+        return p ? { ...adaptarClientePdp(p), seguimiento: c.seguimiento } : c;
+      }),
+  });
+  const reiniciar = campana.reiniciarEstadoCampana,
+    limpiarTelefonos = telefonos.limpiarTelefonos;
+  const cambiarSeguimiento = useCallback(
+    (guardada: CampanaGuardadaWhatsapp | null) => {
+      setSeguida(guardada);
+      setFiltro("TODOS");
+      setBusqueda("");
+      limpiar();
+      limpiarTelefonos();
+      reiniciar();
+      setErrorAccion("");
+      if (guardada) {
+        setRango({
+          desde: guardada.desde,
+          hasta: guardada.hasta,
+          etiqueta: "Rango de campaña",
+        });
+        setGestor(guardada.gestor ?? "");
+        setNumeroSalida(guardada.numero_salida);
+        const p = (Object.keys(STATUS_PDP) as CampanaPdpWhatsapp[]).find(
+          (k) => guardada.campana === "PDP - " + STATUS_PDP[k],
+        );
+        if (p) {
+          setPropuesta(p);
+          setTenor(obtenerPlantillaPdp(p));
+        }
+      }
+    },
+    [limpiar, limpiarTelefonos, reiniciar],
+  );
+  const ocupado = campana.preparando || campana.enviandoCampana;
+  function asegurar(id: string) {
+    const c = clientes.find((c) => c.id === id);
+    if (c && !seleccionados.includes(id))
+      seleccionar([id], { [id]: { campana: propuesta, cliente: c } });
   }
-
-  const clienteRevisionPdp = clienteRevision
-    ? (clientes.find((cliente) => cliente.id === clienteRevision.id) ?? null)
-    : null;
-
-  const telefonoRevision = clienteRevisionPdp
-    ? obtenerTelefonoDestino(clienteRevisionPdp)
-    : "";
-
-  const mensajeBaseOriginal = obtenerPlantillaPdp(campana);
-
+  const onTelefono = (id: string, n: string) => {
+    asegurar(id);
+    telefonos.cambiarTelefono(id, n);
+  };
+  const onSeleccionarTelefonos = (id: string, ns: string[]) => {
+    if (ns.length) asegurar(id);
+    telefonos.seleccionarTelefonos(id, ns);
+  };
+  const onAgregarManual = (id: string, n: string) => {
+    asegurar(id);
+    telefonos.agregarTelefonoManual(id, n);
+  };
+  const metadata = Object.fromEntries(
+    clientes.map((c) => [c.id, { campana: propuesta, cliente: c }]),
+  );
+  function alternarCliente(id: string) {
+    const cliente = clientes.find((c) => c.id === id);
+    const quitar = seleccionados.includes(id);
+    toggle(id, metadata[id]);
+    if (cliente)
+      telefonos.seleccionarTelefonos(
+        id,
+        quitar
+          ? []
+          : telefonosElegiblesWhatsapp(
+              cliente,
+              telefonos.telefonosManuales[id] ?? [],
+            ),
+      );
+  }
+  function alternarClientes(ids: string[]) {
+    const quitar = ids.length > 0 && ids.every((id) => seleccionados.includes(id));
+    toggleMuchos(ids, metadata);
+    for (const cliente of clientes.filter((c) => ids.includes(c.id)))
+      telefonos.seleccionarTelefonos(
+        cliente.id,
+        quitar
+          ? []
+          : telefonosElegiblesWhatsapp(
+              cliente,
+              telefonos.telefonosManuales[cliente.id] ?? [],
+            ),
+      );
+  }
+  const tabla = {
+    seleccionados,
+    cargando,
+    error,
+    telefonosSeleccionados: telefonos.telefonosSeleccionados,
+    telefonosManuales: telefonos.telefonosManuales,
+    onToggle: alternarCliente,
+    onTelefono,
+    onSeleccionarTelefonos,
+    onAgregarManual,
+    soloSinExito: filtro === "SIN_EXITO",
+    disabled: ocupado,
+  };
+  function seleccionarPendientes() {
+    limpiar();
+    const ids: string[] = [];
+    for (const c of clientes) {
+      const ns =
+        c.seguimiento?.telefonos
+          .filter((t) => t.estado === "PENDIENTE")
+          .map((t) => t.numero) ?? [];
+      if (ns.length) {
+        ids.push(c.id);
+        telefonos.seleccionarTelefonos(c.id, ns);
+      }
+    }
+    seleccionar(ids, metadata);
+    if (!ids.length)
+      setErrorAccion("No hay teléfonos pendientes en esta lista.");
+  }
+  async function revisarGuardada() {
+    const d = await campana.revisarCampanaGuardada();
+    if (!d) return;
+    limpiar();
+    seleccionar(
+      d.clientes.map((c) => c.id),
+      Object.fromEntries(
+        d.clientes.map((c) => [
+          c.id,
+          { campana: propuesta, cliente: clientePdp(c) },
+        ]),
+      ),
+    );
+    for (const c of d.clientes)
+      telefonos.seleccionarTelefonos(
+        c.id,
+        d.destinatarios
+          .filter((r) => r.idc === c.idc)
+          .map((r) => r.telefono_destino),
+      );
+  }
   return (
     <>
       <div className="space-y-4">
         <section className="tarjeta p-4 sm:p-5">
-          <div className="mb-4">
-            <h2 className="text-base font-semibold">Configuración del envío</h2>
-
-            <p
-              className="mt-1 text-sm"
-              style={{
-                color: "var(--color-texto-suave)",
-              }}
-            >
-              Define el rango, gestor y número desde el que se realizará la
-              campaña.
-            </p>
-          </div>
-
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <SelectorRangoWhatsapp valor={rango} onChange={cambiarRango} />
-
-            <SelectorGestorWhatsapp valor={gestor} onChange={cambiarGestor} />
-
-            <div>
-              <label className="whatsapp-label">País</label>
-
-              <select
-                value="+51"
-                className="whatsapp-select mt-1"
-                onChange={() => {}}
-              >
-                <option value="+51">Perú (+51)</option>
+          <h2 className="mb-3 font-semibold">Configuración del envío</h2>
+          <fieldset
+            disabled={ocupado}
+            className="grid gap-4 md:grid-cols-2 xl:grid-cols-4"
+          >
+            <SelectorRangoWhatsapp valor={rango} onChange={setRango} />
+            <SelectorGestorWhatsapp valor={gestor} onChange={setGestor} />
+            <label className="whatsapp-label">
+              País
+              <select className="whatsapp-select mt-1">
+                <option>Perú (+51)</option>
               </select>
-            </div>
-
+            </label>
             <SelectorNumeroSalida
               valor={numeroSalida}
               onChange={setNumeroSalida}
             />
-          </div>
+          </fieldset>
         </section>
-
-        <CampanasPdpWhatsapp valor={campana} onChange={cambiarCampana} />
-
+        <CampanasPdpWhatsapp
+          valor={propuesta}
+          onChange={(p) => {
+            if (!ocupado) {
+              setPropuesta(p);
+              setTenor(obtenerPlantillaPdp(p));
+              setBusqueda("");
+            }
+          }}
+        />
+        <ControlSeguimientoWhatsapp
+          modulo="pdps"
+          valor={seguida?.id ?? null}
+          onChange={cambiarSeguimiento}
+          filtro={filtro}
+          onFiltro={setFiltro}
+          version={version}
+          disabled={ocupado}
+          onPendientes={seleccionarPendientes}
+          onRevisar={() => void revisarGuardada()}
+        />
+        {(errorAccion || campana.errorCampana) && (
+          <p
+            role="alert"
+            className="tarjeta p-3 text-sm"
+            style={{ color: "var(--color-error)" }}
+          >
+            {errorAccion || campana.errorCampana}
+          </p>
+        )}
         <BarraClientesWhatsapp
           busqueda={busqueda}
           onBusqueda={setBusqueda}
-          recientes={clientesVisibles.length}
-          total={total}
+          recientes={Math.min(clientes.length, 10)}
+          total={clientes.length}
           seleccionados={cantidadSeleccionados}
           rango={rango.etiqueta}
           onVerMas={() => setModalAbierto(true)}
         />
-
         <section className="tarjeta overflow-hidden">
-          <div
-            className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5"
-            style={{
-              borderBottom: "1px solid var(--color-borde)",
-            }}
-          >
-            <div className="flex items-center gap-3">
-              <div className="whatsapp-icono">
-                <HandCoins size={18} />
-              </div>
-
-              <div>
-                <h2 className="text-base font-semibold">
-                  Últimos clientes PDP
-                </h2>
-
-                <p
-                  className="mt-1 text-xs"
-                  style={{
-                    color: "var(--color-texto-suave)",
-                  }}
-                >
-                  {statusPdp}
-                  {" · "}
-                  {rango.etiqueta}
-                  {" · últimos clientes dentro del rango."}
-                </p>
-              </div>
-            </div>
-
+          <div className="flex justify-between gap-3 p-4">
+            <h2 className="font-semibold">Últimos clientes PDP</h2>
             <button
               type="button"
               className="boton-secundario"
-              disabled={!clientes.length}
-              onClick={seleccionarTodos}
+              disabled={ocupado || !clientes.length}
+              onClick={() => alternarClientes(clientes.map((c) => c.id))}
             >
-              {todosSeleccionados ? "Quitar selección" : "Seleccionar todos"}
+              {clientes.length > 0 &&
+              clientes.every((c) => seleccionados.includes(c.id))
+                ? "Quitar selección"
+                : "Seleccionar clientes"}
             </button>
           </div>
-
           <TablaClientesPdpWhatsapp
-            clientes={clientesVisibles}
-            seleccionados={seleccionados}
-            cargando={cargando}
-            error={error}
-            telefonosSeleccionados={telefonosSeleccionados}
-            telefonosManuales={telefonosManuales}
-            usarTelefonoManual={usarTelefonoManual}
-            onToggle={(id) => {
-              const cliente = clientes.find((item) => item.id === id);
-
-              toggle(id, {
-                campana,
-                cliente,
-              });
-            }}
-            onTelefono={cambiarTelefono}
-            onTelefonoManual={cambiarTelefonoManual}
-            onUsarManual={usarManual}
-            onVolverRegistrado={volverRegistrado}
+            clientes={clientes.slice(0, 10)}
+            {...tabla}
             onVistaPrevia={setClienteVista}
           />
-
-          <div
-            className="flex items-center justify-between border-t p-4 sm:p-5"
-            style={{
-              borderColor: "var(--color-borde)",
-            }}
-          >
-            <span className="text-sm font-medium">
-              {cantidadSeleccionados} seleccionados
-            </span>
-
+          <div className="flex justify-between border-t p-4">
+            <span>{cantidadSeleccionados} clientes seleccionados</span>
             <button
               type="button"
-              className="text-sm font-medium"
-              style={{
-                color: "var(--color-accion)",
-              }}
+              className="text-sm"
               onClick={() => setModalAbierto(true)}
             >
               Ver todos los clientes
             </button>
           </div>
         </section>
-
         <ResumenEnvioWhatsapp
           seleccionados={cantidadSeleccionados}
           campaña={statusPdp}
           gestor={gestor}
           rango={rango.etiqueta}
           numeroSalida={numeroSalida}
-          onPreparar={prepararEnvio}
+          onPreparar={campana.prepararEnvio}
         />
       </div>
-
       {modalAbierto && (
-        <div
-          className="fixed inset-0 z-[110] overflow-y-auto bg-black/45 p-4 sm:p-6"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              setModalAbierto(false);
-            }
-          }}
-        >
-          <div className="mx-auto w-full max-w-7xl">
-            <section className="tarjeta overflow-hidden">
-              <div
-                className="flex items-start justify-between gap-4 border-b p-4 sm:p-5"
-                style={{
-                  borderColor: "var(--color-borde)",
-                }}
+        <div className="fixed inset-0 z-[110] overflow-y-auto bg-black/45 p-4">
+          <section className="tarjeta mx-auto max-w-7xl overflow-hidden">
+            <div className="flex justify-between p-4">
+              <h2 className="font-semibold">Todos los clientes PDP</h2>
+              <button
+                type="button"
+                className="boton-secundario"
+                onClick={() => setModalAbierto(false)}
               >
-                <div>
-                  <h2 className="text-base font-semibold">
-                    Todos los clientes PDP
-                  </h2>
-
-                  <p
-                    className="mt-1 text-xs"
-                    style={{
-                      color: "var(--color-texto-suave)",
-                    }}
-                  >
-                    {statusPdp}
-                    {" · "}
-                    {rango.etiqueta}
-                    {" · "}
-                    {total} encontrados.
-                  </p>
-                </div>
-
-                <button
-                  type="button"
-                  className="boton-secundario"
-                  onClick={() => setModalAbierto(false)}
-                >
-                  Cerrar
-                </button>
-              </div>
-
-              <TablaClientesPdpWhatsapp
-                clientes={clientes}
-                seleccionados={seleccionados}
-                cargando={cargando}
-                error={error}
-                telefonosSeleccionados={telefonosSeleccionados}
-                telefonosManuales={telefonosManuales}
-                usarTelefonoManual={usarTelefonoManual}
-                onToggle={(id) => {
-                  const cliente = clientes.find((item) => item.id === id);
-
-                  toggle(id, {
-                    campana,
-                    cliente,
-                  });
-                }}
-                onTelefono={cambiarTelefono}
-                onTelefonoManual={cambiarTelefonoManual}
-                onUsarManual={usarManual}
-                onVolverRegistrado={volverRegistrado}
-                onVistaPrevia={(cliente) => {
-                  setClienteVista(cliente);
-
-                  setModalAbierto(false);
-                }}
-              />
-            </section>
-          </div>
+                Cerrar
+              </button>
+            </div>
+            <TablaClientesPdpWhatsapp
+              clientes={clientes}
+              {...tabla}
+              onVistaPrevia={(c) => {
+                setClienteVista(c);
+                setModalAbierto(false);
+              }}
+            />
+          </section>
         </div>
       )}
-
-      {clienteVista && (
-        <div
-          className="fixed inset-0 z-[115] overflow-y-auto bg-black/45 p-4 sm:p-6"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              setClienteVista(null);
-            }
-          }}
-        >
+      {clienteVista && !revisionAbierta && (
+        <div className="fixed inset-0 z-[115] overflow-y-auto bg-black/45 p-4">
           <div className="mx-auto max-w-3xl">
             <VistaPreviaWhatsapp
               cliente={adaptarClientePdp(clienteVista)}
               numeroSalida={numeroSalida}
-              numeroDestino={obtenerTelefonoDestino(clienteVista)}
+              numeroDestino={telefonos.telefonoDestino(
+                adaptarClientePdp(clienteVista),
+              )}
               mensaje={
                 mensajesIndividuales[clienteVista.id] ??
-                generarMensajeCliente(
-                  clienteVista,
-                  obtenerMetadata(clienteVista.id)?.campana
-                    ? obtenerPlantillaPdp(
-                        obtenerMetadata(clienteVista.id)!
-                          .campana as CampanaPdpWhatsapp,
-                      )
-                    : tenor,
-                )
+                generarMensajeCliente(adaptarClientePdp(clienteVista), tenor)
               }
-              editable={false}
               onCerrar={() => setClienteVista(null)}
             />
           </div>
         </div>
       )}
-
       <EstadoEnvioWhatsapp
         abierto={estadoAbierto}
         campaña={statusPdp}
         gestor={gestor}
         numeroSalida={numeroSalida}
         total={cantidadSeleccionados}
-        procesados={procesados}
-        preparados={preparados}
-        sinTelefono={sinTelefono}
-        fallidos={fallidos}
-        preparando={preparando}
+        procesados={campana.procesados}
+        preparados={campana.preparados}
+        sinTelefono={campana.sinTelefono}
+        fallidos={campana.fallidos}
+        preparando={campana.preparando || campana.enviandoCampana}
         onCerrar={() => setEstadoAbierto(false)}
       />
-
       <RevisionEnvioWhatsapp
         abierto={revisionAbierta}
+        modoBorrador
+        puedeEnviar={puedeEnviar}
         clientes={clientesPreparados}
         mensajes={mensajesIndividuales}
         mensajeBase={tenor}
-        mensajeBaseOriginal={mensajeBaseOriginal}
+        mensajeBaseOriginal={obtenerPlantillaPdp(propuesta)}
         numeroSalida={numeroSalida}
-        campanaId={campanaId}
-        seleccionados={clientesPreparados.map((cliente) => cliente.id)}
-        preparados={preparados}
-        sinTelefono={sinTelefono}
-        fallidos={fallidos}
+        campanaId={campana.campanaId}
+        seleccionados={clientesPreparados.map((c) => c.id)}
+        preparados={campana.preparados}
+        sinTelefono={campana.sinTelefono}
+        fallidos={campana.fallidos}
         clienteActivo={clienteRevision}
-        numeroDestinoActivo={telefonoRevision}
-        onMensajeBaseChange={(nuevoMensaje) => {
-          setTenor(nuevoMensaje);
-        }}
-        onAplicarATodos={aplicarMensajeATodos}
+        numeroDestinoActivo={
+          clienteRevision ? telefonos.telefonoDestino(clienteRevision) : ""
+        }
+        onMensajeBaseChange={setTenor}
+        onAplicarATodos={() =>
+          setMensajesIndividuales(
+            Object.fromEntries(
+              clientesPreparados.map((c) => [
+                c.id,
+                generarMensajeCliente(c, tenor),
+              ]),
+            ),
+          )
+        }
         onSeleccionarCliente={setClienteRevision}
-        onMensajeIndividualChange={cambiarMensajeIndividual}
-        onRestaurarIndividual={restaurarMensajeIndividual}
+        onMensajeIndividualChange={(id, m) =>
+          setMensajesIndividuales((actual) => ({ ...actual, [id]: m }))
+        }
+        onRestaurarIndividual={(id) => {
+          const c = clientesPreparados.find((c) => c.id === id);
+          if (c)
+            setMensajesIndividuales((actual) => ({
+              ...actual,
+              [id]: generarMensajeCliente(
+                c,
+                obtenerPlantillaPdp(
+                  (obtenerMetadata(id)?.campana as CampanaPdpWhatsapp) ??
+                    propuesta,
+                ),
+              ),
+            }));
+        }}
         onCerrarPreview={() => setClienteRevision(null)}
-        onConfirmar={confirmarCampaña}
+        onConfirmar={campana.confirmarCampaña}
         onCerrar={() => setRevisionAbierta(false)}
+        enviando={campana.enviandoCampana}
+        telefonosElegidos={telefonos.telefonosSeleccionados}
+        error={campana.errorCampana || campana.errorSeleccion}
+        advertencias={
+          <ConfirmarSeguimientosWhatsapp
+            {...campana.advertencias}
+            valor={campana.confirmaciones}
+            onChange={campana.setConfirmaciones}
+            disabled={campana.enviandoCampana}
+          />
+        }
+        selectorTelefonos={
+          clienteRevision && (
+            <SeleccionTelefonosWhatsapp
+              cliente={clienteRevision}
+              seleccionados={
+                telefonos.telefonosSeleccionados[clienteRevision.id] ?? []
+              }
+              manuales={telefonos.telefonosManuales[clienteRevision.id] ?? []}
+              onToggle={(n) => telefonos.cambiarTelefono(clienteRevision.id, n)}
+              onSeleccionar={(ns) =>
+                telefonos.seleccionarTelefonos(clienteRevision.id, ns)
+              }
+              onAgregarManual={(n) =>
+                telefonos.agregarTelefonoManual(clienteRevision.id, n)
+              }
+              disabled={campana.enviandoCampana}
+            />
+          )
+        }
       />
     </>
   );

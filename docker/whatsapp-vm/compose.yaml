@@ -15,6 +15,7 @@ services:
       WHATSAPP_DATA_UUID: ${WHATSAPP_DATA_UUID:?Falta UUID del disco}
       WHATSAPP_CLIENT_FINGERPRINTS: ${WHATSAPP_CLIENT_FINGERPRINTS:?Falta huella cliente}
       WHATSAPP_MAX_SESSIONS: ${WHATSAPP_MAX_SESSIONS:-3}
+      WHATSAPP_REQUIRE_CAMPAIGN_LEASES: ${WHATSAPP_REQUIRE_CAMPAIGN_LEASES:-false}
     ports:
       - "10.0.2.68:8443:8443"
     volumes:
@@ -29,6 +30,16 @@ services:
         read_only: true
         bind:
           create_host_path: false
+      - type: bind
+        source: /run/whatsapp-worker
+        target: /run/crm-control
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /run/whatsapp-lock/worker.lock
+        target: /run/crm-lock/worker.lock
+        bind:
+          create_host_path: false
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=256m,mode=1777
     logging:
@@ -36,3 +47,43 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+  backup:
+    profiles: [maintenance]
+    image: ${WHATSAPP_IMAGE:?Configura una imagen verificada por SHA}
+    command: [backup]
+    user: "999:988"
+    read_only: true
+    restart: "no"
+    init: false
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    network_mode: none
+    pids_limit: 64
+    environment:
+      WHATSAPP_DATA_UUID: ${WHATSAPP_DATA_UUID:?Falta UUID del disco}
+      WHATSAPP_BACKUP_DIRECTORY: /backup
+    volumes:
+      - type: bind
+        source: /srv/whatsapp-data
+        target: /data
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /srv/whatsapp-data/profile-backups
+        target: /backup
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /etc/whatsapp-worker/recovery-public/public.pem
+        target: /recovery/public.pem
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /run/whatsapp-lock/worker.lock
+        target: /run/crm-lock/worker.lock
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m,mode=1777

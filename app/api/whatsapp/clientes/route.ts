@@ -11,6 +11,14 @@ import { leerSesionActual } from "@/lib/auth";
 
 import { SEGMENTACIONES } from "@/lib/catalogo-tipificacion";
 
+import {
+  agregarSeguimientoWhatsapp,
+  leerIdCampana,
+  ErrorCampanaWhatsapp,
+  CABECERAS_CAMPANAS,
+} from "@/lib/whatsapp/campanas";
+import { coincideFiltroSeguimiento } from "@/lib/whatsapp/seguimiento";
+import { fechaActualLima, inicioMesActualLima } from "@/lib/fecha-lima";
 export const runtime = "nodejs";
 
 type CampanaWhatsApp =
@@ -225,115 +233,119 @@ async function obtenerTelefonos(
 }
 
 export async function GET(request: NextRequest) {
-  const sesion = await leerSesionActual();
+  try {
+    const sesion = await leerSesionActual();
 
-  if (!sesion) {
-    return NextResponse.json(
-      {
-        error: "No autenticado.",
-      },
-      {
-        status: 401,
-      },
-    );
-  }
+    if (!sesion) {
+      return NextResponse.json(
+        {
+          error: "No autenticado.",
+        },
+        {
+          status: 401,
+        },
+      );
+    }
 
-  if (
-    !ROLES_PERMITIDOS.includes(
-      sesion.rol as "administrador" | "supervisor" | "gestor",
-    )
-  ) {
-    return NextResponse.json(
-      {
-        error: "Tu rol no tiene permiso para este módulo.",
-      },
-      {
-        status: 403,
-      },
-    );
-  }
+    if (
+      !ROLES_PERMITIDOS.includes(
+        sesion.rol as "administrador" | "supervisor" | "gestor",
+      )
+    ) {
+      return NextResponse.json(
+        {
+          error: "Tu rol no tiene permiso para este módulo.",
+        },
+        {
+          status: 403,
+        },
+      );
+    }
 
-  const params = request.nextUrl.searchParams;
+    if (
+      sesion.debeCambiarContrasena ||
+      (sesion.rol === "gestor" && !sesion.gestor?.trim())
+    ) {
+      return NextResponse.json(
+        { error: "No tienes una sesión autorizada para consultar clientes." },
+        { status: 403, headers: CABECERAS_CAMPANAS },
+      );
+    }
+    const params = request.nextUrl.searchParams;
 
-  const campanaParam = params.get("campana");
+    const campanaParam = params.get("campana");
 
-  const vista = params.get("vista") === "todos" ? "todos" : "recientes";
+    const vista = params.get("vista") === "todos" ? "todos" : "recientes";
 
-  const busqueda = params.get("q")?.trim().toLowerCase() ?? "";
+    const busqueda = params.get("q")?.trim().toLowerCase() ?? "";
 
-  const gestorSolicitado = params.get("gestor")?.trim() ?? "";
+    const gestorSolicitado = params.get("gestor")?.trim() ?? "";
 
-  const hoy = new Date();
+    const desde = params.get("desde") ?? inicioMesActualLima();
 
-  const primerDiaMes = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+    const hasta = params.get("hasta") ?? fechaActualLima();
 
-  const formatearFecha = (fecha: Date) => fecha.toISOString().slice(0, 10);
+    const campanasValidas: CampanaWhatsApp[] = [
+      "sin_contacto",
+      "acuerdo_pago",
+      "contactados",
+      "renuente",
+      "remate_proceso",
+      "casos_especiales",
+    ];
 
-  const desde = params.get("desde") ?? formatearFecha(primerDiaMes);
+    if (
+      campanaParam &&
+      !campanasValidas.includes(campanaParam as CampanaWhatsApp)
+    ) {
+      return NextResponse.json(
+        {
+          error: "Campaña inválida.",
+        },
+        {
+          status: 400,
+        },
+      );
+    }
 
-  const hasta = params.get("hasta") ?? formatearFecha(hoy);
+    if (desde > hasta) {
+      return NextResponse.json(
+        {
+          error: "La fecha desde no puede ser posterior a la fecha hasta.",
+        },
+        {
+          status: 400,
+        },
+      );
+    }
 
-  const campanasValidas: CampanaWhatsApp[] = [
-    "sin_contacto",
-    "acuerdo_pago",
-    "contactados",
-    "renuente",
-    "remate_proceso",
-    "casos_especiales",
-  ];
+    const campana = campanaParam as CampanaWhatsApp | null;
 
-  if (
-    campanaParam &&
-    !campanasValidas.includes(campanaParam as CampanaWhatsApp)
-  ) {
-    return NextResponse.json(
-      {
-        error: "Campaña inválida.",
-      },
-      {
-        status: 400,
-      },
-    );
-  }
+    let gestorFiltro = "";
 
-  if (desde > hasta) {
-    return NextResponse.json(
-      {
-        error: "La fecha desde no puede ser posterior a la fecha hasta.",
-      },
-      {
-        status: 400,
-      },
-    );
-  }
+    if (sesion.rol === "gestor") {
+      gestorFiltro = sesion.gestor?.trim() ?? "";
+    } else if (
+      gestorSolicitado &&
+      !SUPERVISORES_SIN_CARTERA.has(gestorSolicitado)
+    ) {
+      gestorFiltro = gestorSolicitado;
+    }
 
-  const campana = campanaParam as CampanaWhatsApp | null;
+    const parametrosCuentas: unknown[] = [];
 
-  let gestorFiltro = "";
+    let restriccionGestor = "";
 
-  if (sesion.rol === "gestor") {
-    gestorFiltro = sesion.gestor?.trim() ?? "";
-  } else if (
-    gestorSolicitado &&
-    !SUPERVISORES_SIN_CARTERA.has(gestorSolicitado)
-  ) {
-    gestorFiltro = gestorSolicitado;
-  }
+    if (gestorFiltro) {
+      parametrosCuentas.push(gestorFiltro);
 
-  const parametrosCuentas: unknown[] = [];
-
-  let restriccionGestor = "";
-
-  if (gestorFiltro) {
-    parametrosCuentas.push(gestorFiltro);
-
-    restriccionGestor = `
+      restriccionGestor = `
         AND gestor = $1
       `;
-  }
+    }
 
-  const cuentas = await consultarFilas<CuentaBase>(
-    `
+    const cuentas = await consultarFilas<CuentaBase>(
+      `
         SELECT
           idc,
           cliente,
@@ -352,145 +364,172 @@ export async function GET(request: NextRequest) {
           ),
           cliente
       `,
-    parametrosCuentas,
-  );
-
-  if (cuentas.length === 0) {
-    return NextResponse.json({
-      total: 0,
-
-      clientes: [],
-
-      rango: {
-        desde,
-        hasta,
-      },
-
-      vista,
-
-      gestor:
-        gestorSolicitado && SUPERVISORES_SIN_CARTERA.has(gestorSolicitado)
-          ? gestorSolicitado
-          : gestorFiltro || null,
-
-      filtroAplicado: Boolean(gestorFiltro),
-    });
-  }
-
-  const clientesUnicos = Array.from(
-    new Map(cuentas.map((cuenta) => [cuenta.idc, cuenta])).values(),
-  );
-
-  const idcs = clientesUnicos.map((cliente) => cliente.idc);
-
-  const ultimasGestiones = await obtenerUltimasGestiones(idcs, desde, hasta);
-
-  const idcsGestionados = Array.from(ultimasGestiones.keys());
-
-  if (idcsGestionados.length === 0) {
-    return NextResponse.json({
-      total: 0,
-
-      clientes: [],
-
-      rango: {
-        desde,
-        hasta,
-      },
-
-      vista,
-
-      gestor:
-        gestorSolicitado && SUPERVISORES_SIN_CARTERA.has(gestorSolicitado)
-          ? gestorSolicitado
-          : gestorFiltro || null,
-
-      filtroAplicado: Boolean(gestorFiltro),
-    });
-  }
-
-  const telefonos = await obtenerTelefonos(idcsGestionados);
-
-  let clientes = clientesUnicos
-    .filter((cuenta) => ultimasGestiones.has(cuenta.idc))
-    .map((cuenta) => {
-      const gestion = ultimasGestiones.get(cuenta.idc)!;
-
-      const campanaCalculada = determinarCampana(gestion.segmentacion);
-
-      return {
-        id: cuenta.idc,
-
-        idc: cuenta.idc,
-
-        cliente: cuenta.cliente,
-
-        gestor: cuenta.gestor,
-
-        segmentacion: gestion.segmentacion,
-
-        campana: campanaCalculada,
-
-        ultimaGestion: gestion.fecha_hora,
-
-        telefonoUltimaGestion: gestion.telefono,
-
-        telefonos: telefonos.get(cuenta.idc) ?? [],
-
-        pdp: null,
-      };
-    })
-    .filter((cliente) => {
-      if (campana && cliente.campana !== campana) {
-        return false;
-      }
-
-      if (!busqueda) {
-        return true;
-      }
-
-      const texto = [
-        cliente.idc,
-        cliente.cliente,
-        cliente.gestor ?? "",
-        cliente.segmentacion ?? "",
-        cliente.telefonoUltimaGestion ?? "",
-
-        ...cliente.telefonos.map((telefono) => telefono.phone),
-      ]
-        .join(" ")
-        .toLowerCase();
-
-      return texto.includes(busqueda);
-    })
-    .sort(
-      (a, b) =>
-        new Date(b.ultimaGestion).getTime() -
-        new Date(a.ultimaGestion).getTime(),
+      parametrosCuentas,
     );
 
-  const total = clientes.length;
+    if (cuentas.length === 0) {
+      return NextResponse.json({
+        total: 0,
 
-  if (vista === "recientes") {
-    clientes = clientes.slice(0, 10);
+        clientes: [],
+
+        rango: {
+          desde,
+          hasta,
+        },
+
+        vista,
+
+        gestor:
+          gestorSolicitado && SUPERVISORES_SIN_CARTERA.has(gestorSolicitado)
+            ? gestorSolicitado
+            : gestorFiltro || null,
+
+        filtroAplicado: Boolean(gestorFiltro),
+      });
+    }
+
+    const clientesUnicos = Array.from(
+      new Map(cuentas.map((cuenta) => [cuenta.idc, cuenta])).values(),
+    );
+
+    const idcs = clientesUnicos.map((cliente) => cliente.idc);
+
+    const ultimasGestiones = await obtenerUltimasGestiones(idcs, desde, hasta);
+
+    const idcsGestionados = Array.from(ultimasGestiones.keys());
+
+    if (idcsGestionados.length === 0) {
+      return NextResponse.json({
+        total: 0,
+
+        clientes: [],
+
+        rango: {
+          desde,
+          hasta,
+        },
+
+        vista,
+
+        gestor:
+          gestorSolicitado && SUPERVISORES_SIN_CARTERA.has(gestorSolicitado)
+            ? gestorSolicitado
+            : gestorFiltro || null,
+
+        filtroAplicado: Boolean(gestorFiltro),
+      });
+    }
+
+    const telefonos = await obtenerTelefonos(idcsGestionados);
+
+    const clientes = clientesUnicos
+      .filter((cuenta) => ultimasGestiones.has(cuenta.idc))
+      .map((cuenta) => {
+        const gestion = ultimasGestiones.get(cuenta.idc)!;
+
+        const campanaCalculada = determinarCampana(gestion.segmentacion);
+
+        return {
+          id: cuenta.idc,
+
+          idc: cuenta.idc,
+
+          cliente: cuenta.cliente,
+
+          gestor: cuenta.gestor,
+
+          segmentacion: gestion.segmentacion,
+
+          campana: campanaCalculada,
+
+          ultimaGestion: gestion.fecha_hora,
+
+          telefonoUltimaGestion: gestion.telefono,
+
+          telefonos: telefonos.get(cuenta.idc) ?? [],
+
+          pdp: null,
+        };
+      })
+      .filter((cliente) => {
+        if (campana && cliente.campana !== campana) {
+          return false;
+        }
+
+        if (!busqueda) {
+          return true;
+        }
+
+        const texto = [
+          cliente.idc,
+          cliente.cliente,
+          cliente.gestor ?? "",
+          cliente.segmentacion ?? "",
+          cliente.telefonoUltimaGestion ?? "",
+
+          ...cliente.telefonos.map((telefono) => telefono.phone),
+        ]
+          .join(" ")
+          .toLowerCase();
+
+        return texto.includes(busqueda);
+      })
+      .sort(
+        (a, b) =>
+          new Date(b.ultimaGestion).getTime() -
+          new Date(a.ultimaGestion).getTime(),
+      );
+
+    const campanaId = leerIdCampana(params.get("campanaId"));
+    const filtroSeguimiento = params.get("seguimiento") ?? "TODOS";
+    const seguidos = await agregarSeguimientoWhatsapp(
+      clientes,
+      sesion,
+      campanaId,
+    );
+    let clientesSeguidos = seguidos.filter((c) =>
+      coincideFiltroSeguimiento(c.seguimiento, filtroSeguimiento),
+    );
+    const total = clientesSeguidos.length;
+
+    if (vista === "recientes") {
+      clientesSeguidos = clientesSeguidos.slice(0, 10);
+    }
+
+    return NextResponse.json(
+      {
+        total,
+        clientes: clientesSeguidos,
+
+        rango: {
+          desde,
+          hasta,
+        },
+
+        vista,
+
+        gestor:
+          gestorSolicitado && SUPERVISORES_SIN_CARTERA.has(gestorSolicitado)
+            ? gestorSolicitado
+            : gestorFiltro || null,
+
+        filtroAplicado: Boolean(gestorFiltro),
+      },
+      { headers: CABECERAS_CAMPANAS },
+    );
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error:
+          error instanceof ErrorCampanaWhatsapp
+            ? error.message
+            : "No se pudieron cargar los clientes.",
+      },
+      {
+        status: error instanceof ErrorCampanaWhatsapp ? error.status : 500,
+        headers: CABECERAS_CAMPANAS,
+      },
+    );
   }
-
-  return NextResponse.json({
-    total,
-    clientes,
-
-    rango: {
-      desde,
-      hasta,
-    },
-
-    vista,
-
-    gestor:
-      gestorSolicitado && SUPERVISORES_SIN_CARTERA.has(gestorSolicitado)
-        ? gestorSolicitado
-        : gestorFiltro || null,
-
-    filtroAplicado: Boolean(gestorFiltro),
-  });
 }

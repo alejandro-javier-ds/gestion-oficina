@@ -12,15 +12,23 @@ type Props = {
   seleccionados: string[];
   cargando: boolean;
   error?: string;
-  onToggle: (id: string) => void;
-  onTelefono: (id: string, telefonoId: string) => void;
-  onTelefonoManual: (id: string, valor: string) => void;
-  onUsarManual: (id: string) => void;
-  onVolverRegistrado: (id: string) => void;
+  onToggle: (id: string, cliente?: ClienteWhatsapp) => void;
+  onTelefono: (id: string, numero: string, cliente?: ClienteWhatsapp) => void;
+  onSeleccionarTelefonos: (
+    id: string,
+    numeros: string[],
+    cliente?: ClienteWhatsapp,
+  ) => void;
+  onAgregarManual: (
+    id: string,
+    numero: string,
+    cliente?: ClienteWhatsapp,
+  ) => void;
+  soloSinExito?: boolean;
+  disabled?: boolean;
   onVistaPrevia: (cliente: ClienteWhatsapp) => void;
-  telefonosSeleccionados: Record<string, string>;
-  telefonosManuales: Record<string, string>;
-  usarTelefonoManual: Record<string, boolean>;
+  telefonosSeleccionados: Record<string, string[]>;
+  telefonosManuales: Record<string, string[]>;
   vacio?: string;
 };
 
@@ -31,25 +39,15 @@ export default function TablaClientesWhatsapp({
   error = "",
   onToggle,
   onTelefono,
-  onTelefonoManual,
-  onUsarManual,
-  onVolverRegistrado,
+  onSeleccionarTelefonos,
+  onAgregarManual,
+  soloSinExito,
+  disabled,
   onVistaPrevia,
   telefonosSeleccionados,
   telefonosManuales,
-  usarTelefonoManual,
   vacio = "No hay clientes para esta campaña.",
 }: Props) {
-  function primerCelular(cliente: ClienteWhatsapp) {
-    return String(
-      cliente.telefonos.find(
-        (telefono) =>
-          telefono.activo === 1 &&
-          telefono.tipo_telefono.toLowerCase() === "celular",
-      )?.id_phone ?? "",
-    );
-  }
-
   if (cargando) {
     return (
       <div className="flex min-h-[220px] items-center justify-center">
@@ -118,7 +116,7 @@ export default function TablaClientesWhatsapp({
             <th>Segmentación</th>
             <th>Última gestión</th>
             <th>Teléfono usado</th>
-            <th>Teléfono de destino</th>
+            <th>Teléfonos de destino</th>
             <th className="text-right">Mensaje</th>
           </tr>
         </thead>
@@ -129,16 +127,18 @@ export default function TablaClientesWhatsapp({
               key={cliente.id}
               cliente={cliente}
               seleccionado={seleccionados.includes(cliente.id)}
-              telefonoSeleccionado={
-                telefonosSeleccionados[cliente.id] ?? primerCelular(cliente)
+              telefonosSeleccionados={telefonosSeleccionados[cliente.id] ?? []}
+              telefonosManuales={telefonosManuales[cliente.id] ?? []}
+              onToggle={() => onToggle(cliente.id, cliente)}
+              onTelefono={(numero) => onTelefono(cliente.id, numero, cliente)}
+              onSeleccionarTelefonos={(numeros) =>
+                onSeleccionarTelefonos(cliente.id, numeros, cliente)
               }
-              telefonoManual={telefonosManuales[cliente.id] ?? ""}
-              usaTelefonoManual={usarTelefonoManual[cliente.id] ?? false}
-              onToggle={() => onToggle(cliente.id)}
-              onTelefono={(telefonoId) => onTelefono(cliente.id, telefonoId)}
-              onTelefonoManual={(valor) => onTelefonoManual(cliente.id, valor)}
-              onUsarManual={() => onUsarManual(cliente.id)}
-              onVolverRegistrado={() => onVolverRegistrado(cliente.id)}
+              onAgregarManual={(numero) =>
+                onAgregarManual(cliente.id, numero, cliente)
+              }
+              soloSinExito={soloSinExito}
+              disabled={disabled}
               onVistaPrevia={() => onVistaPrevia(cliente)}
             />
           ))}

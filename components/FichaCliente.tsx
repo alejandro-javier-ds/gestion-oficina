@@ -16,6 +16,7 @@ import SeccionDirecciones from "@/components/SeccionDirecciones";
 import CuentaFinanciera from "@/components/CuentaFinanciera";
 import { Cuenta, Garantia, Apersonamiento } from "@/lib/types";
 import { normalizarMoneda } from "@/lib/monedas";
+import { formatearFechaCalendarioLima } from "@/lib/fecha-lima";
 
 type Telefono = {
   id_phone: number;
@@ -140,12 +141,7 @@ function formatearDeudaCuenta(
 
 function formatearFecha(iso: string | null): string {
   if (!iso) return "—";
-
-  const fecha = new Date(iso);
-
-  if (isNaN(fecha.getTime())) return String(iso);
-
-  return fecha.toLocaleDateString("es-PE", {
+  return formatearFechaCalendarioLima(iso, {
     day: "2-digit",
     month: "short",
     year: "numeric",

@@ -7,6 +7,7 @@
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { RefreshCw, Settings, Plus } from "lucide-react";
+import { formatearFechaLima } from "@/lib/fecha-lima";
 
 type Telefono = {
   id_phone: number;
@@ -29,14 +30,7 @@ const ETIQUETA_TIPO: Record<string, string> = {
 
 function formatearFecha(iso: string | null): string {
   if (!iso) return "—";
-
-  const fecha = new Date(iso);
-
-  if (isNaN(fecha.getTime())) {
-    return String(iso);
-  }
-
-  return fecha.toLocaleDateString("es-PE", {
+  return formatearFechaLima(iso, {
     day: "2-digit",
     month: "short",
     year: "numeric",

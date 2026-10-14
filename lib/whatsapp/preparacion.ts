@@ -1,3 +1,5 @@
+import { normalizarCelularWhatsapp } from "./seguimiento";
+
 export type EstadoPreparacion = "PREPARADO" | "SIN_TELEFONO" | "ERROR";
 
 export type DestinatarioPreparado = {
@@ -12,7 +14,7 @@ export type DestinatarioPreparado = {
   tenor: string | null;
 };
 
-export class ErrorPreparacionWhatsapp extends Error { }
+export class ErrorPreparacionWhatsapp extends Error {}
 
 function objeto(valor: unknown): Record<string, unknown> {
   if (!valor || typeof valor !== "object" || Array.isArray(valor)) {
@@ -53,9 +55,26 @@ export function validarPreparacionWhatsapp(entrada: unknown) {
   const gestor = texto(body.gestor, "gestor");
   const desde = texto(body.desde, "desde", true);
   const hasta = texto(body.hasta, "hasta", true);
-  const numeroSalida = texto(body.numeroSalida, "numeroSalida", true);
+  const numeroSalida = normalizarCelularWhatsapp(
+    texto(body.numeroSalida, "numeroSalida", true),
+  );
+  if (
+    !numeroSalida ||
+    campana.length > 160 ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(desde) ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(hasta) ||
+    desde > hasta
+  ) {
+    throw new ErrorPreparacionWhatsapp(
+      "El remitente o el rango de la campaña no es válido.",
+    );
+  }
 
-  if (!Array.isArray(body.destinatarios) || body.destinatarios.length === 0) {
+  if (
+    !Array.isArray(body.destinatarios) ||
+    body.destinatarios.length === 0 ||
+    body.destinatarios.length > 5000
+  ) {
     throw new ErrorPreparacionWhatsapp("La campaña no tiene destinatarios.");
   }
 
@@ -87,9 +106,15 @@ export function validarPreparacionWhatsapp(entrada: unknown) {
 
       const idc = texto(fila.idc, "idc", true);
       const cliente = texto(fila.cliente, "cliente");
-      const telefonoDestino = texto(fila.telefonoDestino, "telefonoDestino");
+      const telefonoOriginal = texto(fila.telefonoDestino, "telefonoDestino");
+      const telefonoDestino =
+        normalizarCelularWhatsapp(telefonoOriginal) || telefonoOriginal;
       const tipoTelefono = texto(fila.tipoTelefono, "tipoTelefono");
       const mensaje = textoOpcional(fila.mensaje, "mensaje");
+      if (idc.length > 100 || (mensaje?.length ?? 0) > 16_000)
+        throw new ErrorPreparacionWhatsapp(
+          "El cliente o mensaje excede el límite permitido.",
+        );
       const error = textoOpcional(fila.error, "error");
 
       if (
@@ -115,14 +140,31 @@ export function validarPreparacionWhatsapp(entrada: unknown) {
     },
   );
 
+  const unicos = new Map<string, DestinatarioPreparado>();
+  for (const [indice, fila] of destinatarios.entries()) {
+    const clave = fila.telefonoDestino
+      ? JSON.stringify([fila.idc, fila.telefonoDestino])
+      : String(indice);
+    const anterior = unicos.get(clave);
+    if (
+      anterior &&
+      (anterior.mensaje !== fila.mensaje || anterior.estado !== fila.estado)
+    )
+      throw new ErrorPreparacionWhatsapp(
+        "Un teléfono del cliente tiene datos de preparación contradictorios.",
+      );
+    if (!anterior) unicos.set(clave, fila);
+  }
+  const destinosUnicos = [...unicos.values()];
   const totales = {
-    totalSeleccionados: destinatarios.length,
-    totalPreparados: destinatarios.filter((fila) => fila.estado === "PREPARADO")
-      .length,
-    totalSinTelefono: destinatarios.filter(
+    totalSeleccionados: destinosUnicos.length,
+    totalPreparados: destinosUnicos.filter(
+      (fila) => fila.estado === "PREPARADO",
+    ).length,
+    totalSinTelefono: destinosUnicos.filter(
       (fila) => fila.estado === "SIN_TELEFONO",
     ).length,
-    totalFallidos: destinatarios.filter((fila) => fila.estado === "ERROR")
+    totalFallidos: destinosUnicos.filter((fila) => fila.estado === "ERROR")
       .length,
   };
   for (const campo of Object.keys(totales) as Array<keyof typeof totales>) {
@@ -139,7 +181,7 @@ export function validarPreparacionWhatsapp(entrada: unknown) {
     desde,
     hasta,
     numeroSalida,
-    destinatarios,
+    destinatarios: destinosUnicos,
     ...totales,
     estado:
       totales.totalFallidos > 0 || totales.totalSinTelefono > 0

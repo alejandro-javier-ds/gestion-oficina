@@ -1,11 +1,8 @@
-// components/whatsapp/FilaClienteWhatsapp.tsx
-// Fila individual del módulo WhatsApp Masivo.
-// Solo muestra celulares como destinos de WhatsApp.
-
 "use client";
-
 import { Eye, Phone } from "lucide-react";
-
+import type { SeguimientoCliente } from "@/lib/whatsapp/seguimiento";
+import SeleccionTelefonosWhatsapp from "./SeleccionTelefonosWhatsapp";
+import SeguimientoClienteWhatsapp from "./SeguimientoClienteWhatsapp";
 export type TelefonoWhatsapp = {
   id_phone: number;
   idc: string;
@@ -27,200 +24,105 @@ export type ClienteWhatsapp = {
   telefonoUltimaGestion: string | null;
   telefonos: TelefonoWhatsapp[];
   pdp: unknown | null;
+  seguimiento?: SeguimientoCliente;
 };
 
 type Props = {
   cliente: ClienteWhatsapp;
   seleccionado: boolean;
-  telefonoSeleccionado?: string;
-  telefonoManual?: string;
-  usaTelefonoManual: boolean;
+  telefonosSeleccionados: string[];
+  telefonosManuales: string[];
   onToggle: () => void;
-  onTelefono: (telefonoId: string) => void;
-  onTelefonoManual: (valor: string) => void;
-  onUsarManual: () => void;
-  onVolverRegistrado: () => void;
+  onTelefono: (numero: string) => void;
+  onSeleccionarTelefonos: (numeros: string[]) => void;
+  onAgregarManual: (numero: string) => void;
   onVistaPrevia: () => void;
+  soloSinExito?: boolean;
+  disabled?: boolean;
 };
-
-function fecha(valor: string) {
-  const date = new Date(valor);
-
-  if (Number.isNaN(date.getTime())) {
-    return valor;
-  }
-
-  return new Intl.DateTimeFormat("es-PE", {
-    timeZone: "America/Lima",
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(date);
-}
-
 export default function FilaClienteWhatsapp({
   cliente,
   seleccionado,
-  telefonoSeleccionado,
-  telefonoManual = "",
-  usaTelefonoManual,
+  telefonosSeleccionados,
+  telefonosManuales,
   onToggle,
   onTelefono,
-  onTelefonoManual,
-  onUsarManual,
-  onVolverRegistrado,
+  onSeleccionarTelefonos,
+  onAgregarManual,
   onVistaPrevia,
+  soloSinExito,
+  disabled,
 }: Props) {
-  const celulares = cliente.telefonos.filter(
-    (telefono) =>
-      telefono.activo === 1 &&
-      telefono.tipo_telefono.toLowerCase() === "celular",
-  );
-
+  const fecha = new Date(cliente.ultimaGestion);
   return (
     <tr className={seleccionado ? "seleccionada" : ""}>
-      <td className="whatsapp-col-check">
+      <td className="whatsapp-col-check align-top">
         <input
           type="checkbox"
           checked={seleccionado}
           onChange={onToggle}
-          aria-label={`Seleccionar ${cliente.cliente}`}
+          disabled={disabled}
+          aria-label={"Seleccionar " + cliente.cliente}
         />
       </td>
-
-      <td className="whatsapp-col-cliente">
-        <p className="truncate font-semibold" title={cliente.cliente}>
+      <td className="whatsapp-col-cliente align-top">
+        <p className="font-semibold" title={cliente.cliente}>
           {cliente.cliente}
         </p>
-
-        <p
-          className="mt-1 truncate text-xs"
-          style={{ color: "var(--color-texto-suave)" }}
-        >
-          {cliente.idc}
-          {cliente.gestor ? ` · ${cliente.gestor}` : ""}
-        </p>
-      </td>
-
-      <td className="whatsapp-col-segmentacion">
-        <span className="chip chip-accion whitespace-nowrap">
-          {cliente.segmentacion ?? "Sin segmentación"}
-        </span>
-      </td>
-
-      <td className="whatsapp-col-fecha">
-        <p className="dato-numerico text-sm font-medium">
-          {fecha(cliente.ultimaGestion)}
-        </p>
-
         <p
           className="mt-1 text-xs"
           style={{ color: "var(--color-texto-suave)" }}
         >
-          Última gestión
+          {cliente.idc}
+          {cliente.gestor ? " · " + cliente.gestor : ""}
         </p>
+        <SeguimientoClienteWhatsapp
+          seguimiento={cliente.seguimiento}
+          idc={cliente.idc}
+        />
       </td>
-
-      <td className="whatsapp-col-historico">
-        <div className="flex items-start gap-2">
-          <Phone
-            size={15}
-            className="mt-0.5"
-            style={{ color: "var(--color-texto-suave)" }}
-          />
-
-          <div>
-            <p className="dato-numerico text-sm font-medium">
-              {cliente.telefonoUltimaGestion || "Sin teléfono"}
-            </p>
-
-            <p
-              className="mt-1 text-xs"
-              style={{ color: "var(--color-texto-suave)" }}
-            >
-              Usado en gestión
-            </p>
-          </div>
+      <td className="whatsapp-col-segmentacion align-top">
+        <span className="chip chip-accion">
+          {cliente.segmentacion ?? "Sin segmentación"}
+        </span>
+      </td>
+      <td className="whatsapp-col-fecha align-top">
+        <p className="dato-numerico text-sm">
+          {Number.isNaN(fecha.getTime())
+            ? cliente.ultimaGestion
+            : new Intl.DateTimeFormat("es-PE", {
+                timeZone: "America/Lima",
+                dateStyle: "short",
+                timeStyle: "short",
+              }).format(fecha)}
+        </p>
+        <p className="mt-1 text-xs">Última gestión</p>
+      </td>
+      <td className="whatsapp-col-historico align-top">
+        <div className="flex gap-2">
+          <Phone size={15} />
+          <span className="text-sm">
+            {cliente.telefonoUltimaGestion || "Sin teléfono"}
+          </span>
         </div>
+        <p className="mt-1 text-xs">Usado en gestión</p>
       </td>
-
-      <td className="whatsapp-col-destino">
-        {usaTelefonoManual ? (
-          <div className="flex flex-col gap-1.5">
-            <div className="flex gap-2">
-              <span
-                className="flex h-9 items-center rounded-md px-2.5 text-sm"
-                style={{
-                  background: "var(--color-fondo-sutil)",
-                  border: "1px solid var(--color-borde)",
-                  color: "var(--color-texto-suave)",
-                }}
-              >
-                +51
-              </span>
-
-              <input
-                type="text"
-                inputMode="numeric"
-                value={telefonoManual}
-                onChange={(e) =>
-                  onTelefonoManual(e.target.value.replace(/\D/g, ""))
-                }
-                placeholder="Número"
-                className="input-estandar min-w-0 w-full"
-              />
-            </div>
-
-            <button
-              type="button"
-              className="w-fit text-xs font-medium"
-              style={{ color: "var(--color-accion)" }}
-              onClick={onVolverRegistrado}
-            >
-              Usar registrado
-            </button>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-1.5">
-            <select
-              value={telefonoSeleccionado ?? ""}
-              onChange={(e) => onTelefono(e.target.value)}
-              className="whatsapp-select whatsapp-select-compact"
-            >
-              {celulares.length ? (
-                celulares.map((telefono) => (
-                  <option
-                    key={telefono.id_phone}
-                    value={String(telefono.id_phone)}
-                  >
-                    {telefono.phone}
-                    {telefono.agregado_manualmente ? " · Manual" : ""}
-                  </option>
-                ))
-              ) : (
-                <option value="">Sin celular registrado</option>
-              )}
-            </select>
-
-            <button
-              type="button"
-              className="w-fit text-xs font-medium"
-              style={{ color: "var(--color-accion)" }}
-              onClick={onUsarManual}
-            >
-              Ingresar otro número
-            </button>
-          </div>
-        )}
+      <td className="whatsapp-col-destino align-top">
+        <SeleccionTelefonosWhatsapp
+          cliente={cliente}
+          seleccionados={telefonosSeleccionados}
+          manuales={telefonosManuales}
+          onToggle={onTelefono}
+          onSeleccionar={onSeleccionarTelefonos}
+          onAgregarManual={onAgregarManual}
+          soloSinExito={soloSinExito}
+          disabled={disabled}
+        />
       </td>
-
-      <td className="whatsapp-col-mensaje">
+      <td className="whatsapp-col-mensaje align-top">
         <button
           type="button"
-          className="inline-flex items-center gap-1.5 whitespace-nowrap text-sm font-medium"
+          className="inline-flex items-center gap-1.5 text-sm font-medium"
           style={{ color: "var(--color-accion)" }}
           onClick={onVistaPrevia}
         >

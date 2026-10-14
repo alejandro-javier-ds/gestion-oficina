@@ -6,7 +6,7 @@ import { checkServerIdentity } from "node:tls";
 import { WebSocket } from "ws";
 
 export const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
-export const OPERACIONES = new Set(["iniciar", "estado", "qr", "metadatos", "temporales", "cerrarTemporal", "enviar", "visor"]);
+export const OPERACIONES = new Set(["iniciar", "estado", "qr", "metadatos", "temporales", "cerrarTemporal", "enviar", "visor", "campana"]);
 export const CABECERAS_PRIVADAS = { "Cache-Control": "private, no-store, max-age=0", "X-Content-Type-Options": "nosniff" };
 
 export class ErrorRemotoWhatsapp extends Error {
@@ -21,7 +21,8 @@ export function modoWhatsapp() {
 
 export function validarActor(actor, op) {
   if (!actor || !Number.isSafeInteger(actor.userId) || actor.userId < 1 || actor.debeCambiarContrasena !== false ||
-    !(op === "estado" ? ["administrador", "supervisor", "gestor"] : ["administrador", "supervisor"]).includes(actor.rol)) {
+    !(op === "estado" ? ["administrador", "supervisor", "gestor"] : ["administrador", "supervisor"]).includes(actor.rol) ||
+    actor.campanaLeaseId !== undefined && !UUID.test(actor.campanaLeaseId)) {
     throw new ErrorRemotoWhatsapp("OPERACION_NO_AUTORIZADA", "No tienes permiso para realizar esta operación de WhatsApp.", 403);
   }
 }
@@ -29,14 +30,17 @@ export function validarActor(actor, op) {
 export function validarOperacion(entrada) {
   if (!entrada || typeof entrada !== "object" || Array.isArray(entrada) || !OPERACIONES.has(entrada.op) ||
     Object.keys(entrada).some((k) => !["op", "numero", "payload"].includes(k))) throw new ErrorRemotoWhatsapp("OPERACION_INVALIDA", "Operación inválida.", 400);
-  if (entrada.op !== "temporales" && !/^9\d{8}$/.test(entrada.numero ?? "")) throw new ErrorRemotoWhatsapp("NUMERO_INVALIDO", "Número inválido.", 400);
+  if (!["temporales", "campana"].includes(entrada.op) && !/^9\d{8}$/.test(entrada.numero ?? "")) throw new ErrorRemotoWhatsapp("NUMERO_INVALIDO", "Número inválido.", 400);
   const payload = entrada.payload;
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new ErrorRemotoWhatsapp("OPERACION_INVALIDA", "Operación inválida.", 400);
-  const claves = { iniciar: ["temporal"], enviar: ["destino", "mensaje", "idEnvio"], visor: ["id"] }[entrada.op] ?? [];
-  if (Object.keys(payload).some((k) => !claves.includes(k)) || claves.some((k) => !(k in payload))) throw new ErrorRemotoWhatsapp("OPERACION_INVALIDA", "Operación inválida.", 400);
+  const claves = { iniciar: ["temporal"], enviar: ["destino", "mensaje", "idEnvio", "leaseId"], visor: ["id"], campana: ["accion", "campanaId", "leaseId"] }[entrada.op] ?? [];
+  if (Object.keys(payload).some((k) => !claves.includes(k))) throw new ErrorRemotoWhatsapp("OPERACION_INVALIDA", "Operación inválida.", 400);
+  if (entrada.op !== "campana" && (entrada.op === "enviar" ? ["destino", "mensaje", "idEnvio"] : claves).some((k) => !(k in payload))) throw new ErrorRemotoWhatsapp("OPERACION_INVALIDA", "Operación inválida.", 400);
   if (entrada.op === "iniciar" && typeof payload.temporal !== "boolean") throw new ErrorRemotoWhatsapp("OPERACION_INVALIDA", "Operación inválida.", 400);
   if (entrada.op === "visor" && !UUID.test(payload.id ?? "")) throw new ErrorRemotoWhatsapp("VISOR_INVALIDO", "Visor inválido.", 400);
-  if (entrada.op === "enviar" && (!/^9\d{8}$/.test(payload.destino ?? "") || !UUID.test(payload.idEnvio ?? "") ||
+  if (entrada.op === "campana" && (!Number.isSafeInteger(payload.campanaId) || payload.campanaId < 1 || !["iniciar", "finalizar"].includes(payload.accion) ||
+    payload.accion === "iniciar" && "leaseId" in payload || payload.accion === "finalizar" && !UUID.test(payload.leaseId ?? ""))) throw new ErrorRemotoWhatsapp("OPERACION_INVALIDA", "Operación inválida.", 400);
+  if (entrada.op === "enviar" && (!/^9\d{8}$/.test(payload.destino ?? "") || !UUID.test(payload.idEnvio ?? "") || "leaseId" in payload && !UUID.test(payload.leaseId ?? "") ||
     typeof payload.mensaje !== "string" || !payload.mensaje.trim() || payload.mensaje.length > 16_000)) {
     throw new ErrorRemotoWhatsapp("ENVIO_INVALIDO", "El teléfono, mensaje o identificador de envío no es válido.", 400);
   }
@@ -49,7 +53,7 @@ export function firmarOperacion(entrada, actor, key, ahora = Date.now()) {
   const cuerpo = JSON.stringify(entrada);
   const capacidad = Buffer.from(JSON.stringify({ v: 1, op: entrada.op, numero: entrada.numero ?? null,
     userId: actor.userId, rol: actor.rol, iat: Math.floor(ahora / 1000), exp: Math.floor(ahora / 1000) + 30,
-    nonce: randomUUID(), hash: createHash("sha256").update(cuerpo).digest("hex") })).toString("base64url");
+    campanaLeaseId: actor.campanaLeaseId ?? null, nonce: randomUUID(), hash: createHash("sha256").update(cuerpo).digest("hex") })).toString("base64url");
   return { cuerpo, headers: { "Content-Type": "application/json", "x-crm-capacidad": capacidad,
     "x-crm-firma": sign("sha256", Buffer.from(capacidad), key).toString("base64url") } };
 }
@@ -70,7 +74,9 @@ export function verificarOperacion(cuerpo, headers, certificado, nonces, ahora =
   let entrada;
   try { entrada = validarOperacion(JSON.parse(cuerpo)); } catch { fallo(); }
   if (entrada.op !== datos.op || (entrada.numero ?? null) !== datos.numero) fallo();
-  const actor = { userId: datos.userId, rol: datos.rol, debeCambiarContrasena: false };
+  if (datos?.campanaLeaseId != null && !UUID.test(datos.campanaLeaseId)) fallo();
+  const actor = { userId: datos.userId, rol: datos.rol, debeCambiarContrasena: false,
+    ...(datos.campanaLeaseId ? { campanaLeaseId: datos.campanaLeaseId } : {}) };
   validarActor(actor, entrada.op);
   for (const [nonce, caduca] of nonces) if (caduca < segundos - 5) nonces.delete(nonce);
   if (nonces.has(datos.nonce) || nonces.size >= 10_000) fallo();

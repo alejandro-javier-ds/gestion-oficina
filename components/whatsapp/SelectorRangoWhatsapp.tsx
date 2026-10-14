@@ -13,7 +13,8 @@ import {
   X,
 } from "lucide-react";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { fechaActualLima, inicioMesActualLima, sumarDiasCalendario } from "@/lib/fecha-lima";
 
 export type RangoWhatsapp = {
   desde: string;
@@ -25,26 +26,6 @@ type Props = {
   valor: RangoWhatsapp;
   onChange: (rango: RangoWhatsapp) => void;
 };
-
-function fechaLocalISO(fecha: Date): string {
-  const year = fecha.getFullYear();
-  const month = String(fecha.getMonth() + 1).padStart(2, "0");
-  const day = String(fecha.getDate()).padStart(2, "0");
-
-  return `${year}-${month}-${day}`;
-}
-
-function restarDias(fecha: Date, dias: number): Date {
-  const resultado = new Date(fecha);
-
-  resultado.setDate(resultado.getDate() - dias);
-
-  return resultado;
-}
-
-function primerDiaMes(fecha: Date): Date {
-  return new Date(fecha.getFullYear(), fecha.getMonth(), 1);
-}
 
 function formatearFecha(valor: string): string {
   if (!valor) return "";
@@ -64,8 +45,6 @@ export default function SelectorRangoWhatsapp({ valor, onChange }: Props) {
   const [hasta, setHasta] = useState(valor.hasta);
 
   const ref = useRef<HTMLDivElement>(null);
-
-  const hoy = useMemo(() => new Date(), []);
 
   useEffect(() => {
     function cerrar(event: MouseEvent) {
@@ -100,28 +79,28 @@ export default function SelectorRangoWhatsapp({ valor, onChange }: Props) {
     setPersonalizado(false);
   }
 
-  const isoHoy = fechaLocalISO(hoy);
+  const isoHoy = fechaActualLima();
 
   function elegirHoy() {
     aplicar(isoHoy, isoHoy, "Hoy");
   }
 
   function elegirAyer() {
-    const ayer = fechaLocalISO(restarDias(hoy, 1));
+    const ayer = sumarDiasCalendario(isoHoy, -1);
 
     aplicar(ayer, ayer, "Ayer");
   }
 
   function elegir7Dias() {
-    aplicar(fechaLocalISO(restarDias(hoy, 6)), isoHoy, "Últimos 7 días");
+    aplicar(sumarDiasCalendario(isoHoy, -6), isoHoy, "Últimos 7 días");
   }
 
   function elegir30Dias() {
-    aplicar(fechaLocalISO(restarDias(hoy, 29)), isoHoy, "Últimos 30 días");
+    aplicar(sumarDiasCalendario(isoHoy, -29), isoHoy, "Últimos 30 días");
   }
 
   function elegirEsteMes() {
-    aplicar(fechaLocalISO(primerDiaMes(hoy)), isoHoy, "Este mes");
+    aplicar(inicioMesActualLima(), isoHoy, "Este mes");
   }
 
   function aplicarPersonalizado() {

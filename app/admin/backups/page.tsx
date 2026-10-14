@@ -8,8 +8,9 @@
 
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Database, Download, RefreshCw, HardDrive } from "lucide-react";
+import { Database, Download, RefreshCw, HardDrive, Upload } from "lucide-react";
 import HeaderPanelAdmin from "@/components/HeaderPanelAdmin";
+import { formatearFechaHoraLima } from "@/lib/fecha-lima";
 
 type Respaldo = {
   nombre: string;
@@ -18,8 +19,7 @@ type Respaldo = {
 };
 
 function formatearFecha(iso: string): string {
-  const fecha = new Date(iso);
-  return fecha.toLocaleString("es-PE", {
+  return formatearFechaHoraLima(iso, {
     day: "2-digit",
     month: "short",
     year: "numeric",
@@ -32,12 +32,11 @@ export default function BackupsPage() {
   const [respaldos, setRespaldos] = useState<Respaldo[]>([]);
   const [cargando, setCargando] = useState(true);
   const [creando, setCreando] = useState(false);
+  const [recuperando, setRecuperando] = useState(false);
   const [mensaje, setMensaje] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   function cargarRespaldos() {
-    setCargando(true);
-    setError(null);
     fetch("/api/admin/backups")
       .then(async (res) => {
         const data = await res.json();
@@ -47,6 +46,7 @@ export default function BackupsPage() {
         }
         setRespaldos(data.respaldos ?? []);
       })
+      .catch(() => setError("No se pudieron cargar los respaldos."))
       .finally(() => setCargando(false));
   }
 
@@ -66,9 +66,47 @@ export default function BackupsPage() {
 
     if (res.ok) {
       setMensaje(`Respaldo creado: ${data.nombre} (${data.tamanoMB} MB)`);
+      setCargando(true);
       cargarRespaldos();
     } else {
       setError(data.error ?? "No se pudo crear el respaldo.");
+    }
+  }
+
+  async function recuperarRespaldosBlob() {
+    setRecuperando(true);
+    setMensaje(null);
+    setError(null);
+
+    try {
+      const res = await fetch("/api/admin/backups/recuperar-blob", {
+        method: "POST",
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.error ?? "No se pudieron recuperar los respaldos.");
+        return;
+      }
+
+      setMensaje(
+        `Revisados ${data.revisados}: ${data.copiados} copiados a Azure Blob Storage y ${data.existentes} ya estaban guardados.`,
+      );
+      if (data.errores?.length) {
+        const nombres = data.errores
+          .slice(0, 3)
+          .map((respaldo: { nombre: string }) => respaldo.nombre)
+          .join(", ");
+        setError(
+          `${data.errores.length} respaldo(s) no se pudieron copiar. ${nombres}`,
+        );
+      }
+      setCargando(true);
+      cargarRespaldos();
+    } catch {
+      setError("No se pudieron recuperar los respaldos.");
+    } finally {
+      setRecuperando(false);
     }
   }
 
@@ -102,15 +140,30 @@ export default function BackupsPage() {
             </p>
           </div>
         </div>
-        <button
-          onClick={crearRespaldo}
-          disabled={creando}
-          className="flex items-center gap-2 px-4 py-2 rounded text-sm font-medium text-white disabled:opacity-50"
-          style={{ background: "var(--color-accion)" }}
-        >
-          <RefreshCw size={15} className={creando ? "animate-spin" : ""} />
-          {creando ? "Creando..." : "Crear respaldo"}
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={recuperarRespaldosBlob}
+            disabled={recuperando || creando}
+            className="flex items-center gap-2 px-4 py-2 rounded text-sm font-medium disabled:opacity-50"
+            style={{
+              border: "1px solid var(--color-borde-fuerte)",
+              color: "var(--color-accion)",
+            }}
+            title="Copia los respaldos locales que aún no están en Azure Blob Storage, sin sobrescribir los existentes."
+          >
+            <Upload size={15} className={recuperando ? "animate-pulse" : ""} />
+            {recuperando ? "Recuperando..." : "Recuperar en Azure Blob"}
+          </button>
+          <button
+            onClick={crearRespaldo}
+            disabled={creando || recuperando}
+            className="flex items-center gap-2 px-4 py-2 rounded text-sm font-medium text-white disabled:opacity-50"
+            style={{ background: "var(--color-accion)" }}
+          >
+            <RefreshCw size={15} className={creando ? "animate-spin" : ""} />
+            {creando ? "Creando..." : "Crear respaldo"}
+          </button>
+        </div>
       </div>
 
       {mensaje && (

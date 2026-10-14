@@ -1,5 +1,5 @@
 import { ManagedIdentityCredential } from "@azure/identity";
-import { createDefaultHttpClient } from "@azure/core-rest-pipeline";
+import { createDefaultHttpClient, isRestError } from "@azure/core-rest-pipeline";
 import { BlobServiceClient, type ContainerClient } from "@azure/storage-blob";
 import { createHash } from "node:crypto";
 import { createReadStream, promises as fs } from "node:fs";
@@ -46,9 +46,9 @@ function obtenerContenedor() {
 }
 
 function tieneCodigo(error: unknown, estado: number, ...codigos: string[]) {
-  if (typeof error !== "object" || error === null) return false;
-  const datos = error as { statusCode?: number; code?: string };
-  return datos.statusCode === estado && codigos.includes(datos.code ?? "");
+  if (!isRestError(error) || error.statusCode !== estado) return false;
+  const codigoServicio = error.response?.headers.get("x-ms-error-code");
+  return codigos.includes(codigoServicio ?? error.code ?? "");
 }
 
 async function cargarRespaldo(ruta: string): Promise<ResultadoCopia> {

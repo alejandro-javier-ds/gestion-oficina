@@ -6,6 +6,7 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { Pencil, Trash2 } from "lucide-react";
 import { useSesion } from "@/components/SesionProvider";
+import { formatearFechaLima } from "@/lib/fecha-lima";
 
 type FilaFeed = {
   id: number;
@@ -32,7 +33,7 @@ function formatearHaceTiempo(iso: string): string {
   const horas = Math.floor(minutos / 60);
   if (horas < 24) return `Hace ${horas} h`;
 
-  return new Date(iso).toLocaleDateString("es-PE", {
+  return formatearFechaLima(iso, {
     day: "2-digit",
     month: "short",
   });

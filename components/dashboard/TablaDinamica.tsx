@@ -23,6 +23,7 @@ import {
   LayoutGrid,
   SlidersHorizontal,
 } from "lucide-react";
+import { formatearFechaLima } from "@/lib/fecha-lima";
 
 type Campo = { clave: string; etiqueta: string };
 type Medida = {
@@ -60,7 +61,19 @@ function claveCompuesta(
 }
 
 function etiquetaLegible(clave: string): string {
-  return clave === "Total" ? "Total" : clave.split(SEPARADOR).join(" / ");
+  if (clave === "Total") return "Total";
+  return clave
+    .split(SEPARADOR)
+    .map((valor) =>
+      /^\d{4}-\d{2}-\d{2}(?:$|T)/.test(valor)
+        ? formatearFechaLima(valor, {
+            day: "2-digit",
+            month: "2-digit",
+            year: "numeric",
+          })
+        : valor,
+    )
+    .join(" / ");
 }
 
 function ChipArrastrable({ id, etiqueta }: { id: string; etiqueta: string }) {

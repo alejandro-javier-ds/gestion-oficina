@@ -10,28 +10,7 @@
 import { Download, FileSpreadsheet, ListChecks } from "lucide-react";
 
 import { useState } from "react";
-
-function obtenerHoyLocal(): string {
-  const fecha = new Date();
-
-  const year = fecha.getFullYear();
-
-  const month = String(fecha.getMonth() + 1).padStart(2, "0");
-
-  const day = String(fecha.getDate()).padStart(2, "0");
-
-  return `${year}-${month}-${day}`;
-}
-
-function obtenerInicioMesLocal(): string {
-  const fecha = new Date();
-
-  const year = fecha.getFullYear();
-
-  const month = String(fecha.getMonth() + 1).padStart(2, "0");
-
-  return `${year}-${month}-01`;
-}
+import { fechaActualLima, inicioMesActualLima } from "@/lib/fecha-lima";
 
 const GESTORES = [
   "Geraldine Salazar",
@@ -43,9 +22,9 @@ const GESTORES = [
 type TipoExportacion = "gestiones" | "pdps";
 
 export default function ExportarMensajesWhatsapp() {
-  const [desde, setDesde] = useState(obtenerInicioMesLocal());
+  const [desde, setDesde] = useState(inicioMesActualLima());
 
-  const [hasta, setHasta] = useState(obtenerHoyLocal());
+  const [hasta, setHasta] = useState(fechaActualLima());
 
   const [gestor, setGestor] = useState("");
 

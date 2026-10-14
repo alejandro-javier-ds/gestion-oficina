@@ -1,7 +1,11 @@
 import fs from "node:fs/promises";
 import http from "node:http";
+import net from "node:net";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { crearServidorWhatsapp } from "./server.mjs";
-import { validarDisco, escribirAtomico } from "./storage.mjs";
+import { validarDisco, escribirAtomico, sincronizarDirectorio } from "./storage.mjs";
+import { crearCoordinadorMantenimiento, recuperarReservasHuerfanas, validarCampanasGuardadas } from "./coordination.mjs";
 import { crearRegistroEnvios } from "./journal.mjs";
 import { ErrorRemotoWhatsapp, type ActorWhatsapp, type OperacionWhatsapp } from "../whatsapp-wire.mjs";
 
@@ -39,6 +43,44 @@ function guardarPropietarios() {
 const trabajos = new Set<Promise<unknown>>();
 const iniciando = new Map<string, Promise<unknown>>();
 const ocupados = new Set<string>();
+const archivoCampanas = "/data/.active-campaigns.json";
+let campanasGuardadas: Record<string, { campanaId: number; userId: number }> = {};
+try { campanasGuardadas = validarCampanasGuardadas(JSON.parse(await fs.readFile(archivoCampanas, "utf8"))); }
+catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("El registro de campañas activas requiere revisión; no se modifica."); }
+const carpetaRecuperacionCampanas = "/data/.campaign-recovery";
+const recuperacionCampanas = await recuperarReservasHuerfanas({
+  guardadas: campanasGuardadas,
+  archivar: async (reservas: Record<string, { campanaId: number; userId: number }>) => {
+    await fs.mkdir(carpetaRecuperacionCampanas, { recursive: true, mode: 0o700 });
+    const stat = await fs.lstat(carpetaRecuperacionCampanas);
+    if (!stat.isDirectory() || stat.uid !== 999 || (stat.mode & 0o077) !== 0 || await fs.realpath(carpetaRecuperacionCampanas) !== carpetaRecuperacionCampanas) throw new Error("El archivo de recuperación de campañas no es seguro.");
+    const archivo = path.join(carpetaRecuperacionCampanas, `${Date.now()}-${randomUUID()}.json`);
+    const handle = await fs.open(archivo, "wx", 0o600);
+    let persistido = false;
+    try {
+      await handle.writeFile(JSON.stringify({ version: 1, fecha: new Date().toISOString(), reservas }));
+      await handle.sync();
+      persistido = true;
+    } finally {
+      await handle.close();
+      if (!persistido) await fs.unlink(archivo).catch(() => {});
+    }
+    await sincronizarDirectorio(carpetaRecuperacionCampanas);
+  },
+  guardar: (reservas: Record<string, { campanaId: number; userId: number }>) => escribirAtomico(archivoCampanas, reservas),
+});
+campanasGuardadas = recuperacionCampanas.guardadas;
+if (recuperacionCampanas.recuperadas > 0) console.log(JSON.stringify({ evento: "reservas_campana_huerfanas_recuperadas", cantidad: recuperacionCampanas.recuperadas }));
+const archivoMantenimiento = "/run/crm-control/maintenance.json";
+let mantenimientoInicial = false;
+try {
+  const stat = await fs.lstat(archivoMantenimiento);
+  if (!stat.isFile() || stat.uid !== 999 || (stat.mode & 0o077) !== 0 || stat.size > 64) throw new Error("Registro de mantenimiento inválido");
+  const estadoMantenimiento = JSON.parse(await fs.readFile(archivoMantenimiento, "utf8"));
+  if (estadoMantenimiento?.v !== 1 || typeof estadoMantenimiento.mantenimiento !== "boolean") throw new Error("Registro de mantenimiento inválido");
+  mantenimientoInicial = estadoMantenimiento.mantenimiento;
+} catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("El registro de mantenimiento requiere revisión; no se modifica."); }
+const coordinador = crearCoordinadorMantenimiento({ guardadas: campanasGuardadas, guardar: (estado: Record<string, { campanaId: number; userId: number }>) => escribirAtomico(archivoCampanas, estado), guardarMantenimiento: (mantenimiento?: boolean) => escribirAtomico(archivoMantenimiento, { v: 1, mantenimiento: mantenimiento === true }), mantenimientoInicial, exigirReservas: process.env.WHATSAPP_REQUIRE_CAMPAIGN_LEASES === "true" });
 const maxSesiones = Number(process.env.WHATSAPP_MAX_SESSIONS ?? 3);
 if (!Number.isInteger(maxSesiones) || maxSesiones < 1 || maxSesiones > 20) throw new Error("WHATSAPP_MAX_SESSIONS debe estar entre 1 y 20.");
 let listo = true;
@@ -62,8 +104,13 @@ const registrarEnvio = crearRegistroEnvios("/data/envios", async (numero: string
 });
 async function operar(entrada: OperacionWhatsapp, actor: ActorWhatsapp): Promise<unknown> {
   const numero = entrada.numero ?? "";
+  if (!coordinador.admite(entrada, actor)) throw new ErrorRemotoWhatsapp("MANTENIMIENTO_WHATSAPP", "WhatsApp está entrando en mantenimiento; la operación no se inició.", 503);
   if (numero) autorizarPropietario(numero, actor);
   switch (entrada.op) {
+    case "campana": {
+      if (entrada.payload.accion === "iniciar") return { leaseId: await coordinador.iniciarCampana(entrada.payload.campanaId, actor.userId) };
+      return coordinador.finalizarCampana(entrada.payload.leaseId, entrada.payload.campanaId, actor.userId);
+    }
     case "temporales": return [...propietarios].filter(([, p]) => p.temporal && p.userId === actor.userId).map(([n]) => n);
     case "estado": return motor.obtenerEstadoWhatsapp(numero);
     case "qr": return motor.obtenerVinculacionWhatsapp(numero);
@@ -102,6 +149,7 @@ async function operar(entrada: OperacionWhatsapp, actor: ActorWhatsapp): Promise
       } finally { ocupados.delete(numero); }
     }
     case "enviar": {
+      if (process.env.WHATSAPP_REQUIRE_CAMPAIGN_LEASES === "true" && (!coordinador.validarEnvio(entrada.payload.leaseId, actor.userId) || actor.campanaLeaseId !== entrada.payload.leaseId)) throw new ErrorRemotoWhatsapp("CAMPANA_NO_AUTORIZADA", "El envío no pertenece a una campaña activa.", 409);
       if (ocupados.has(numero) || iniciando.has(numero)) throw new ErrorRemotoWhatsapp("SESION_OCUPADA", "La sesión está ocupada; no se inició otro envío.", 409);
       ocupados.add(numero);
       try { return await registrarEnvio(entrada, actor); } finally { ocupados.delete(numero); }
@@ -113,6 +161,7 @@ const servicio = crearServidorWhatsapp({
   tls: { ca: await fs.readFile("/tls/ca.crt"), cert: await fs.readFile("/tls/server.crt"), key: await fs.readFile("/tls/server.key") },
   fingerprints: process.env.WHATSAPP_CLIENT_FINGERPRINTS ?? "",
   disponible: async () => listo && !parando,
+  admiteVisor: async () => listo && !parando && !coordinador.estado().mantenimiento,
   escritorio,
   operar(entrada: OperacionWhatsapp, actor: ActorWhatsapp) {
     const trabajo = operar(entrada, actor);
@@ -121,6 +170,35 @@ const servicio = crearServidorWhatsapp({
     return trabajo;
   },
 });
+const control = net.createServer((socket) => {
+  socket.setTimeout(5000, () => socket.destroy());
+  let cuerpo = "";
+  socket.on("data", (datos) => {
+    cuerpo += datos.toString("utf8");
+    if (Buffer.byteLength(cuerpo) > 4096) { socket.destroy(); return; }
+    const separador = cuerpo.indexOf("\n");
+    if (separador < 0) return;
+    socket.pause();
+    void (async () => {
+      let resultado: unknown;
+      try {
+        const solicitud = JSON.parse(cuerpo.slice(0, separador));
+        if (solicitud.op === "prepare") {
+          socket.setTimeout(0);
+          resultado = await coordinador.preparar({ trabajosPendientes: () => trabajos.size,
+          cerrarVisores: () => servicio.cerrarVisores(), timeoutMs: Number.isInteger(solicitud.timeoutMs) && solicitud.timeoutMs >= 1000 && solicitud.timeoutMs <= 7_200_000 ? solicitud.timeoutMs : 7_200_000 });
+        } else if (solicitud.op === "abort") resultado = await coordinador.abortar({ trabajosPendientes: () => trabajos.size });
+        else if (solicitud.op === "status") resultado = { ...coordinador.estado(), operacionesActivas: trabajos.size };
+        else resultado = { ok: false, motivo: "operacion_invalida" };
+      } catch { resultado = { ok: false, motivo: "coordinacion_no_disponible" }; }
+      if (!socket.destroyed) socket.end(JSON.stringify(resultado) + "\n");
+    })();
+  });
+});
+const controlSocket = "/run/crm-control/maintenance.sock";
+await fs.unlink(controlSocket).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; });
+await new Promise<void>((resolve, reject) => { control.once("error", reject); control.listen(controlSocket, resolve); });
+await fs.chmod(controlSocket, 0o600);
 const health = http.createServer((_request, response) => { response.writeHead(listo && !parando ? 200 : 503); response.end(); });
 const healthSocket = "/tmp/whatsapp-health.sock";
 await fs.unlink(healthSocket).catch((e: NodeJS.ErrnoException) => { if (e.code !== "ENOENT") throw e; });
@@ -140,6 +218,7 @@ async function detener(codigo: number) {
   await Promise.allSettled([...propietarios.keys()].map(motor.cerrarWhatsapp));
   await escritura.catch(() => {});
   await servicio.cerrar();
+  await new Promise<void>((resolve) => control.close(() => resolve()));
   await new Promise<void>((resolve) => health.close(() => resolve()));
   clearTimeout(corte);
   process.exit(codigo);

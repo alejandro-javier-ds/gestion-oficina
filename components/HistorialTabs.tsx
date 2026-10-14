@@ -6,6 +6,7 @@ import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 
 import HistorialGestiones from "./HistorialGestiones";
+import { formatearFechaCalendarioLima } from "@/lib/fecha-lima";
 
 type SubTab = "gestiones" | "negociaciones" | "asignaciones";
 
@@ -44,13 +45,11 @@ function TabTexto({
 }
 
 function formatearFecha(iso: string): string {
-  const [anio, mes, dia] = iso.split("-");
-
-  if (!anio || !mes || !dia) {
-    return iso;
-  }
-
-  return `${dia} - ${mes} - ${anio}`;
+  return formatearFechaCalendarioLima(iso, {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
 }
 
 export default function HistorialTabs({

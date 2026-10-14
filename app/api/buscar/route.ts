@@ -25,6 +25,10 @@ import {
 
 export const runtime = "nodejs";
 
+const CABECERAS_BUSQUEDA_PRIVADA = {
+  "Cache-Control": "private, no-store, max-age=0",
+};
+
 type CuentaBusqueda = Pick<
   Cuenta,
   "codcuentacobranza" | "idc" | "cliente" | "mtodeuda_sol"
@@ -115,11 +119,42 @@ export async function GET(request: NextRequest) {
       },
       {
         status: 401,
+        headers: CABECERAS_BUSQUEDA_PRIVADA,
       },
     );
   }
 
   try {
+    if (request.nextUrl.searchParams.get("cartera") === "propia") {
+      if (sesion.rol !== "gestor" || !sesion.gestor?.trim()) {
+        return NextResponse.json(
+          { error: "No tienes una cartera de gestor asignada." },
+          { status: 403, headers: CABECERAS_BUSQUEDA_PRIVADA },
+        );
+      }
+
+      const cuentas = await consultarFilas<CuentaBusqueda>(
+        `
+          SELECT codcuentacobranza, idc, cliente, mtodeuda_sol
+          FROM cuentas
+          WHERE gestor = $1
+            AND activo = 1
+          ORDER BY cliente, codcuentacobranza
+        `,
+        [sesion.gestor],
+      );
+      const resultados = await agruparPorCliente(cuentas);
+
+      return NextResponse.json(
+        {
+          query: "Mi cartera",
+          total: resultados.length,
+          resultados,
+        },
+        { headers: CABECERAS_BUSQUEDA_PRIVADA },
+      );
+    }
+
     const q = validarTextoBusqueda(request.nextUrl.searchParams.get("q"));
 
     if (/^\d+$/.test(q)) {
@@ -132,7 +167,7 @@ export async function GET(request: NextRequest) {
         query: q,
         total: resultados.length,
         resultados,
-      });
+      }, { headers: CABECERAS_BUSQUEDA_PRIVADA });
     }
 
     const todasLasCuentas = await consultarFilas<CuentaBusqueda>(
@@ -170,7 +205,7 @@ export async function GET(request: NextRequest) {
       query: q,
       total: resultados.length,
       resultados,
-    });
+    }, { headers: CABECERAS_BUSQUEDA_PRIVADA });
   } catch (error) {
     if (
       error instanceof ErrorParametroBusqueda ||
@@ -178,7 +213,10 @@ export async function GET(request: NextRequest) {
     ) {
       return NextResponse.json(
         { error: error.message },
-        { status: error instanceof ErrorParametroBusqueda ? 400 : 422 },
+        {
+          status: error instanceof ErrorParametroBusqueda ? 400 : 422,
+          headers: CABECERAS_BUSQUEDA_PRIVADA,
+        },
       );
     }
     throw error;

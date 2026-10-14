@@ -6,18 +6,18 @@
 
 import { NextRequest, NextResponse } from "next/server";
 
-import {
-  consultarFilas,
-  consultarUno,
-  ejecutar,
-  conTransaccion,
-} from "@/lib/postgres";
+import { consultarFilas, consultarUno } from "@/lib/postgres";
 
 import { leerSesionActual } from "@/lib/auth";
+import { ErrorPreparacionWhatsapp } from "@/lib/whatsapp/preparacion";
+
 import {
-  validarPreparacionWhatsapp,
-  ErrorPreparacionWhatsapp,
-} from "@/lib/whatsapp/preparacion";
+  guardarSeleccionCampanaWhatsapp,
+  validarAccesoCampanas,
+  obtenerCampanaAutorizada,
+  ErrorCampanaWhatsapp,
+  CABECERAS_CAMPANAS,
+} from "@/lib/whatsapp/campanas";
 
 export const runtime = "nodejs";
 
@@ -55,215 +55,36 @@ type DestinatarioWhatsapp = {
   tenor: string | null;
 };
 
-function obtenerUsuarioSesion(sesion: {
-  nombreCompleto?: string;
-  nombre?: string;
-  email?: string;
-}): string {
-  return sesion.nombreCompleto ?? sesion.nombre ?? sesion.email ?? "Usuario";
-}
-
 export async function POST(request: NextRequest) {
-  const sesion = await leerSesionActual();
-
-  if (!sesion) {
-    return NextResponse.json(
-      {
-        error: "No autenticado.",
-      },
-      {
-        status: 401,
-      },
-    );
-  }
-
-  if (!ROLES_PERMITIDOS.includes(sesion.rol)) {
-    return NextResponse.json(
-      {
-        error: "No tienes permiso para crear campañas.",
-      },
-      {
-        status: 403,
-      },
-    );
-  }
-
   try {
-    const {
-      campana,
-      gestor,
-      desde,
-      hasta,
-      numeroSalida,
-      destinatarios,
-      totalSeleccionados,
-      totalPreparados,
-      totalSinTelefono,
-      totalFallidos,
-      estado,
-    } = validarPreparacionWhatsapp(await request.json());
-
-    const fechaCreacion = new Date().toISOString();
-
-    const campanaId = await conTransaccion(async () => {
-      const creada = await consultarUno<{
-        id: number;
-      }>(
-        `
-                INSERT INTO whatsapp_campanas (
-                  fecha_creacion,
-                  usuario_creador,
-                  campana,
-                  gestor,
-                  desde,
-                  hasta,
-                  numero_salida,
-                  total_seleccionados,
-                  total_preparados,
-                  total_sin_telefono,
-                  total_fallidos,
-                  total_enviados,
-                  estado
-                )
-
-                VALUES (
-                  $1,
-                  $2,
-                  $3,
-                  $4,
-                  $5,
-                  $6,
-                  $7,
-                  $8,
-                  $9,
-                  $10,
-                  $11,
-                  0,
-                  $12
-                )
-
-                RETURNING
-                  id::int
-                    AS id
-              `,
-        [
-          fechaCreacion,
-          obtenerUsuarioSesion(sesion),
-          campana,
-          gestor || null,
-          desde,
-          hasta,
-          numeroSalida,
-          totalSeleccionados,
-          totalPreparados,
-          totalSinTelefono,
-          totalFallidos,
-          estado,
-        ],
-      );
-
-      if (!creada) {
-        throw new Error("No se pudo crear la campaña.");
-      }
-
-      for (const destinatario of destinatarios) {
-        await ejecutar(
-          `
-                INSERT INTO whatsapp_campana_destinatarios (
-                  campana_id,
-                  idc,
-                  cliente,
-                  gestor,
-                  telefono_destino,
-                  tipo_telefono,
-                  estado,
-                  error,
-                  fecha_procesamiento,
-                  mensaje,
-                  duracion_ms,
-                  tenor
-                )
-
-                VALUES (
-                  $1,
-                  $2,
-                  $3,
-                  $4,
-                  $5,
-                  $6,
-                  $7,
-                  $8,
-                  $9,
-                  $10,
-                  $11,
-                  $12
-                )
-              `,
-          [
-            creada.id,
-
-            destinatario.idc,
-
-            destinatario.cliente,
-
-            destinatario.gestor ?? null,
-
-            destinatario.telefonoDestino || null,
-
-            destinatario.tipoTelefono || null,
-
-            destinatario.estado,
-
-            destinatario.error ?? null,
-
-            null,
-
-            destinatario.mensaje ?? null,
-
-            null,
-
-            destinatario.tenor ?? null,
-          ],
-        );
-      }
-
-      return creada.id;
-    });
-
-    return NextResponse.json(
-      {
-        ok: true,
-        id: campanaId,
-        estado,
-      },
-      {
-        status: 201,
-      },
+    const sesion = validarAccesoCampanas(await leerSesionActual());
+    const resultado = await guardarSeleccionCampanaWhatsapp(
+      sesion,
+      await request.json(),
     );
+    return NextResponse.json(resultado, {
+      status: 201,
+      headers: CABECERAS_CAMPANAS,
+    });
   } catch (error) {
-    if (
-      error instanceof ErrorPreparacionWhatsapp ||
-      error instanceof SyntaxError
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            error instanceof ErrorPreparacionWhatsapp
-              ? error.message
-              : "El cuerpo de la solicitud no es válido.",
-        },
-        { status: 400 },
-      );
-    }
-    console.error("Error creando historial WhatsApp:", error);
-
+    const status =
+      error instanceof ErrorCampanaWhatsapp
+        ? error.status
+        : error instanceof ErrorPreparacionWhatsapp ||
+            error instanceof SyntaxError
+          ? 400
+          : 500;
     return NextResponse.json(
       {
-        error: "No se pudo guardar la campaña.",
+        error:
+          error instanceof ErrorCampanaWhatsapp ||
+          error instanceof ErrorPreparacionWhatsapp
+            ? error.message
+            : status === 400
+              ? "El cuerpo de la solicitud no es válido."
+              : "No se pudo guardar la campaña.",
       },
-      {
-        status: 500,
-      },
+      { status, headers: CABECERAS_CAMPANAS },
     );
   }
 }
@@ -282,7 +103,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  if (!ROLES_PERMITIDOS.includes(sesion.rol)) {
+  if (sesion.debeCambiarContrasena || !ROLES_PERMITIDOS.includes(sesion.rol)) {
     return NextResponse.json(
       {
         error: "No tienes permiso para consultar el historial.",
@@ -312,6 +133,7 @@ export async function GET(request: NextRequest) {
         );
       }
 
+      await obtenerCampanaAutorizada(sesion, id);
       const campana = await consultarUno<CampanaWhatsapp>(
         `
             SELECT
@@ -389,17 +211,20 @@ export async function GET(request: NextRequest) {
 
             WHERE
               campana_id = $1
-
+              AND ($2::text IS NULL OR EXISTS (SELECT 1 FROM cuentas a WHERE a.idc = whatsapp_campana_destinatarios.idc AND a.activo = 1 AND a.gestor = $2))
             ORDER BY
               id ASC
           `,
-        [id],
+        [id, sesion.rol === "gestor" ? sesion.gestor : null],
       );
 
-      return NextResponse.json({
-        campana,
-        destinatarios,
-      });
+      return NextResponse.json(
+        {
+          campana,
+          destinatarios,
+        },
+        { headers: CABECERAS_CAMPANAS },
+      );
     }
 
     const q = params.get("q")?.trim() ?? "";
@@ -416,6 +241,18 @@ export async function GET(request: NextRequest) {
       return `$${valores.length}`;
     }
 
+    if (sesion.rol === "gestor") {
+      validarAccesoCampanas(sesion);
+      const p = agregarParametro(sesion.gestor);
+      condiciones.push(
+        "EXISTS (SELECT 1 FROM whatsapp_campana_destinatarios d JOIN cuentas a ON a.idc = d.idc AND a.activo = 1 WHERE d.campana_id = whatsapp_campanas.id AND a.gestor = " +
+          p +
+          ")",
+      );
+    }
+    const modulo = params.get("modulo");
+    if (modulo === "pdps") condiciones.push("campana LIKE 'PDP - %'");
+    if (modulo === "gestiones") condiciones.push("campana NOT LIKE 'PDP - %'");
     if (q) {
       const parametro = agregarParametro(`%${q}%`);
 
@@ -445,6 +282,10 @@ export async function GET(request: NextRequest) {
       condiciones.push(`estado = ${parametro}`);
     }
 
+    const limite = params.has("limite")
+      ? Math.min(200, Math.max(1, Number(params.get("limite")) || 100))
+      : null;
+    const clausulaLimite = limite ? "LIMIT " + agregarParametro(limite) : "";
     const campanas = await consultarFilas<CampanaWhatsapp>(
       `
           SELECT
@@ -484,22 +325,28 @@ export async function GET(request: NextRequest) {
           ORDER BY
             fecha_creacion DESC,
             id DESC
+          ${clausulaLimite}
         `,
       valores,
     );
 
-    return NextResponse.json({
-      campanas,
-    });
-  } catch (error) {
-    console.error("Error consultando historial WhatsApp:", error);
-
     return NextResponse.json(
       {
-        error: "No se pudo consultar el historial.",
+        campanas,
+      },
+      { headers: CABECERAS_CAMPANAS },
+    );
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error:
+          error instanceof ErrorCampanaWhatsapp
+            ? error.message
+            : "No se pudo consultar el historial.",
       },
       {
-        status: 500,
+        status: error instanceof ErrorCampanaWhatsapp ? error.status : 500,
+        headers: CABECERAS_CAMPANAS,
       },
     );
   }

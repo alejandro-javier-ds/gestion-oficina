@@ -12,7 +12,12 @@ import type { ClienteWhatsapp } from "./FilaClienteWhatsapp";
 import TablaClientesWhatsapp from "./TablaClientesWhatsapp";
 import { useWhatsappClientes } from "@/hooks/useWhatsappClientes";
 
+import type { FiltroSeguimientoWhatsapp } from "@/lib/whatsapp/seguimiento";
 type Props = {
+  campanaId?: number | null;
+  seguimiento?: FiltroSeguimientoWhatsapp;
+  refresco?: number;
+  disabled?: boolean;
   abierto: boolean;
   onCerrar: () => void;
   campana: string;
@@ -20,20 +25,35 @@ type Props = {
   hasta: string;
   gestor: string;
   seleccionados: string[];
-  onToggle: (id: string) => void;
-  onToggleMuchos: (ids: string[]) => void;
-  telefonosSeleccionados: Record<string, string>;
-  telefonosManuales: Record<string, string>;
-  usarTelefonoManual: Record<string, boolean>;
-  onTelefono: (id: string, telefonoId: string) => void;
-  onTelefonoManual: (id: string, valor: string) => void;
-  onUsarManual: (id: string) => void;
-  onVolverRegistrado: (id: string) => void;
+  onToggle: (id: string, cliente?: ClienteWhatsapp) => void;
+  onToggleMuchos: (ids: string[], clientes?: ClienteWhatsapp[]) => void;
+  telefonosSeleccionados: Record<string, string[]>;
+  telefonosManuales: Record<string, string[]>;
+  onTelefono: (id: string, numero: string, cliente?: ClienteWhatsapp) => void;
+  onSeleccionarTelefonos: (
+    id: string,
+    numeros: string[],
+    cliente?: ClienteWhatsapp,
+  ) => void;
+  onAgregarManual: (
+    id: string,
+    numero: string,
+    cliente?: ClienteWhatsapp,
+  ) => void;
   onVistaPrevia: (cliente: ClienteWhatsapp) => void;
 };
 
-export default function ModalClientesWhatsapp({
+export default function ModalClientesWhatsapp(props: Props) {
+  if (!props.abierto) return null;
+  return <ContenidoModalClientesWhatsapp {...props} />;
+}
+
+function ContenidoModalClientesWhatsapp({
   abierto,
+  campanaId,
+  seguimiento,
+  refresco,
+  disabled,
   onCerrar,
   campana,
   desde,
@@ -44,11 +64,9 @@ export default function ModalClientesWhatsapp({
   onToggleMuchos,
   telefonosSeleccionados,
   telefonosManuales,
-  usarTelefonoManual,
   onTelefono,
-  onTelefonoManual,
-  onUsarManual,
-  onVolverRegistrado,
+  onSeleccionarTelefonos,
+  onAgregarManual,
   onVistaPrevia,
 }: Props) {
   const [busqueda, setBusqueda] = useState("");
@@ -61,13 +79,10 @@ export default function ModalClientesWhatsapp({
     busqueda,
     vista: "todos",
     activo: abierto,
+    campanaId,
+    seguimiento,
+    refresco,
   });
-
-  useEffect(() => {
-    if (!abierto) {
-      setBusqueda("");
-    }
-  }, [abierto]);
 
   useEffect(() => {
     if (!abierto) return;
@@ -92,7 +107,7 @@ export default function ModalClientesWhatsapp({
     idsVisibles.every((id) => seleccionados.includes(id));
 
   function alternarSeleccionVisibles() {
-    onToggleMuchos(idsVisibles);
+    onToggleMuchos(idsVisibles, clientes);
   }
 
   return (
@@ -207,13 +222,13 @@ export default function ModalClientesWhatsapp({
             error={error}
             onToggle={onToggle}
             onTelefono={onTelefono}
-            onTelefonoManual={onTelefonoManual}
-            onUsarManual={onUsarManual}
-            onVolverRegistrado={onVolverRegistrado}
+            onSeleccionarTelefonos={onSeleccionarTelefonos}
+            onAgregarManual={onAgregarManual}
+            soloSinExito={seguimiento === "SIN_EXITO"}
+            disabled={disabled}
             onVistaPrevia={onVistaPrevia}
             telefonosSeleccionados={telefonosSeleccionados}
             telefonosManuales={telefonosManuales}
-            usarTelefonoManual={usarTelefonoManual}
             vacio="No se encontraron clientes."
           />
         </div>

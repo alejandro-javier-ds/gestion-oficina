@@ -16,6 +16,7 @@ COPY --from=build /build/node_modules/playwright /app/node_modules/playwright
 COPY --from=build /build/node_modules/playwright-core /app/node_modules/playwright-core
 COPY --from=build /build/node_modules/ws /app/node_modules/ws
 RUN node /app/node_modules/playwright/cli.js install --with-deps chromium && chmod -R a+rX /ms-playwright && rm -rf /var/lib/apt/lists/*
+RUN mkdir -p /recovery /backup /run/crm-control /run/crm-lock && chmod 555 /recovery /backup /run/crm-control /run/crm-lock
 COPY docker/chromium-policy.json /etc/chromium/policies/managed/crm.json
 COPY docker/chromium-policy.json /etc/opt/chrome/policies/managed/crm.json
 COPY docker/chromium-policy.json /etc/opt/chrome_for_testing/policies/managed/crm.json

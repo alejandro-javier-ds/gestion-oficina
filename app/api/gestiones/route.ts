@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { consultarFilas, consultarUno } from "@/lib/postgres";
 
 import { leerSesionActual } from "@/lib/auth";
+import { columnaFechaLimaSql } from "@/lib/fecha-lima";
 
 import {
   SEGMENTACIONES,
@@ -92,6 +93,8 @@ export async function GET(request: NextRequest) {
   const orden =
     request.nextUrl.searchParams.get("orden") === "antiguas" ? "ASC" : "DESC";
 
+  const fechaGestionLima = columnaFechaLimaSql("fecha_hora");
+
   const condiciones: string[] = ["idc = $1"];
 
   const parametros: unknown[] = [idc];
@@ -107,7 +110,7 @@ export async function GET(request: NextRequest) {
   }
 
   if (desde) {
-    condiciones.push(`fecha_hora::date >= $${siguienteParametro}::date`);
+    condiciones.push(`${fechaGestionLima} >= $${siguienteParametro}::date`);
 
     parametros.push(desde);
 
@@ -115,7 +118,7 @@ export async function GET(request: NextRequest) {
   }
 
   if (hasta) {
-    condiciones.push(`fecha_hora::date <= $${siguienteParametro}::date`);
+    condiciones.push(`${fechaGestionLima} <= $${siguienteParametro}::date`);
 
     parametros.push(hasta);
 

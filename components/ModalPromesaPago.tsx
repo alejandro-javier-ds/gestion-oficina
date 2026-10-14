@@ -113,22 +113,6 @@ function formatearMontoCuenta(valor: number | null, moneda: string): string {
   return `${simboloMoneda(moneda)} ${formatearNumero(valor)}`;
 }
 
-function formatearFecha(iso: string): string {
-  if (!iso) return "—";
-
-  const fecha = new Date(iso);
-
-  if (Number.isNaN(fecha.getTime())) {
-    return iso;
-  }
-
-  return fecha.toLocaleDateString("es-PE", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-}
-
 function Label({
   children,
   obligatorio = false,

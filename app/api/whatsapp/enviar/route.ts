@@ -13,15 +13,31 @@ import {
 
 import { leerSesionActual, type DatosSesion } from "@/lib/auth";
 
-import { enviarUnMensajeWhatsapp, identificadorEnvioWhatsapp } from "@/lib/whatsapp/envio";
-import { autorizarNumeroVinculacion, actualizarPermisoEnvioWhatsapp } from "@/lib/whatsapp/acceso-vinculacion";
+import {
+  enviarUnMensajeWhatsapp,
+  identificadorEnvioWhatsapp,
+} from "@/lib/whatsapp/envio";
+import {
+  autorizarNumeroVinculacion,
+  actualizarPermisoEnvioWhatsapp,
+} from "@/lib/whatsapp/acceso-vinculacion";
 
 import {
   iniciarWhatsappParaEnvio,
   esSesionWhatsappTemporal,
   cerrarYEliminarWhatsappTemporal,
+  iniciarReservaCampanaWhatsapp,
+  finalizarReservaCampanaWhatsapp,
 } from "@/lib/whatsapp/playwright";
 
+import {
+  DESTINOS_ACTUALES_SQL,
+  validarDestinosAutorizados,
+  ErrorCampanaWhatsapp,
+  validarConfirmacionesEnvioWhatsapp,
+  versionSeleccionWhatsapp,
+} from "@/lib/whatsapp/campanas";
+import { normalizarCelularWhatsapp } from "@/lib/whatsapp/seguimiento";
 export const runtime = "nodejs";
 
 const ROLES_PERMITIDOS = ["administrador", "supervisor"];
@@ -100,6 +116,9 @@ async function enviarConReintento(
   mensaje: string,
   sesion: DatosSesion,
   idEnvio: string,
+  idc: string,
+  tipoTelefono: string,
+  leaseId: string | null,
 ): Promise<ResultadoEnvioConReintento> {
   let reintentos = 0;
 
@@ -111,13 +130,30 @@ async function enviarConReintento(
     const inicio = Date.now();
 
     try {
-      const actorActual = await actualizarPermisoEnvioWhatsapp(sesion, numeroSalida);
+      const actorActual = await actualizarPermisoEnvioWhatsapp(
+        sesion,
+        numeroSalida,
+      );
+      await validarDestinosAutorizados(actorActual, [
+        {
+          idc,
+          cliente: "",
+          gestor: null,
+          telefonoDestino: telefono,
+          tipoTelefono,
+          mensaje,
+          estado: "PREPARADO",
+          error: null,
+          tenor: null,
+        },
+      ]);
       const resultado = await enviarUnMensajeWhatsapp(
         numeroSalida,
         telefono,
         mensaje,
-        actorActual,
+        leaseId ? { ...actorActual, campanaLeaseId: leaseId } : actorActual,
         idEnvio,
+        leaseId,
       );
 
       const duracionReportada = Number(resultado.duracionMs ?? 0);
@@ -222,6 +258,8 @@ type Destinatario = {
 
   telefono_destino: string | null;
 
+  tipo_telefono: string | null;
+
   mensaje: string | null;
 
   estado: string;
@@ -280,11 +318,7 @@ async function contarEstadosCampana(campanaId: number): Promise<ConteoFinal> {
           )::int
             AS pendientes
 
-        FROM
-          whatsapp_campana_destinatarios
-
-        WHERE
-          campana_id = $1
+        FROM (${DESTINOS_ACTUALES_SQL}) AS actuales
       `,
     [campanaId],
   );
@@ -398,11 +432,21 @@ export async function POST(request: NextRequest) {
 
   let body: {
     campanaId?: unknown;
+    versionSeleccion?: unknown;
+    seleccionExplicita?: unknown;
+    confirmarSeguimientos?: unknown;
+    confirmarReintentos?: unknown;
+    confirmarResultadosRevisados?: unknown;
   } | null = null;
 
   try {
     body = (await request.json()) as {
       campanaId?: unknown;
+      versionSeleccion?: unknown;
+      seleccionExplicita?: unknown;
+      confirmarSeguimientos?: unknown;
+      confirmarReintentos?: unknown;
+      confirmarResultadosRevisados?: unknown;
     };
   } catch {
     return NextResponse.json(
@@ -427,6 +471,17 @@ export async function POST(request: NextRequest) {
       },
     );
   }
+
+  let leaseId: string | null = null;
+  try {
+    leaseId = await iniciarReservaCampanaWhatsapp(campanaId, sesion);
+  } catch {
+    return NextResponse.json(
+      { error: "WhatsApp está ocupado o entrando en mantenimiento. No se inició la campaña." },
+      { status: 503, headers: { "Cache-Control": "private, no-store" } },
+    );
+  }
+  const actorCampana = leaseId ? { ...sesion, campanaLeaseId: leaseId } : sesion;
 
   try {
     const campana = await consultarUno<Campana>(
@@ -489,70 +544,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (campana.total_sin_telefono > 0 || campana.total_fallidos > 0) {
-      return NextResponse.json(
-        {
-          error:
-            "La campaña tiene destinatarios con errores. Corrige la campaña antes de enviarla.",
-        },
-        {
-          status: 409,
-        },
-      );
-    }
-
     await autorizarNumeroVinculacion(sesion, campana.numero_salida);
-    const sesionTemporal = await esSesionWhatsappTemporal(campana.numero_salida, sesion);
+    const sesionTemporal = await esSesionWhatsappTemporal(
+      campana.numero_salida,
+      actorCampana,
+    );
 
     const estadoWhatsapp = await iniciarWhatsappParaEnvio(
       campana.numero_salida,
       sesionTemporal,
       20_000,
-      sesion,
+      actorCampana,
     );
 
     if (!estadoWhatsapp.conectado) {
       return NextResponse.json(
         {
           error: `El número de salida ${campana.numero_salida} no está conectado a WhatsApp Web.`,
-        },
-        {
-          status: 409,
-        },
-      );
-    }
-
-    const destinatarios = await consultarFilas<Destinatario>(
-      `
-          SELECT
-            id::int
-              AS id,
-
-            idc,
-            cliente,
-            telefono_destino,
-            mensaje,
-            estado
-
-          FROM
-            whatsapp_campana_destinatarios
-
-          WHERE
-            campana_id = $1
-
-            AND estado =
-              'PREPARADO'
-
-          ORDER BY
-            id ASC
-        `,
-      [campanaId],
-    );
-
-    if (destinatarios.length === 0) {
-      return NextResponse.json(
-        {
-          error: "La campaña no tiene destinatarios preparados para enviar.",
         },
         {
           status: 409,
@@ -575,7 +583,7 @@ export async function POST(request: NextRequest) {
       );
 
       if (!lock?.bloqueado) {
-        return false;
+        return null;
       }
 
       const resultado = await consultarUno<{
@@ -625,7 +633,44 @@ export async function POST(request: NextRequest) {
         [campanaId],
       );
 
-      return Boolean(resultado);
+      if (!resultado) return null;
+      if (
+        body?.seleccionExplicita !== true ||
+        body.versionSeleccion !== (await versionSeleccionWhatsapp(campanaId))
+      )
+        throw new ErrorCampanaWhatsapp(
+          "La selección cambió o no fue revisada. Actualiza la campaña antes de enviar.",
+          409,
+        );
+      const pendientes = await consultarFilas<Destinatario>(
+        `SELECT id::int, idc, cliente, telefono_destino, tipo_telefono, mensaje, estado FROM (${DESTINOS_ACTUALES_SQL}) AS actuales WHERE estado = 'PREPARADO' ORDER BY id`,
+        [campanaId],
+      );
+      if (!pendientes.length)
+        throw new ErrorCampanaWhatsapp(
+          "La campaña no tiene destinatarios preparados para enviar.",
+          409,
+        );
+      await validarConfirmacionesEnvioWhatsapp(
+        campanaId,
+        pendientes,
+        body ?? {},
+      );
+      await validarDestinosAutorizados(
+        sesion,
+        pendientes.map((d) => ({
+          idc: d.idc,
+          cliente: d.cliente ?? "",
+          gestor: null,
+          telefonoDestino: normalizarCelularWhatsapp(d.telefono_destino),
+          tipoTelefono: d.tipo_telefono ?? "celular",
+          mensaje: d.mensaje,
+          estado: "PREPARADO",
+          error: null,
+          tenor: null,
+        })),
+      );
+      return pendientes;
     });
 
     if (!reclamada) {
@@ -639,6 +684,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const destinatarios = reclamada;
     let enviados = 0;
 
     let fallidos = 0;
@@ -662,7 +708,7 @@ export async function POST(request: NextRequest) {
     for (const destinatario of destinatarios) {
       const fecha = new Date().toISOString();
 
-      const telefono = destinatario.telefono_destino ?? "";
+      const telefono = normalizarCelularWhatsapp(destinatario.telefono_destino);
 
       const mensaje = destinatario.mensaje ?? "";
 
@@ -710,12 +756,19 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
+      await ejecutar(
+        "UPDATE whatsapp_campana_destinatarios SET estado = 'ENVIANDO', fecha_procesamiento = $1 WHERE id = $2 AND campana_id = $3 AND estado = 'PREPARADO'",
+        [fecha, destinatario.id, campanaId],
+      );
       const resultado = await enviarConReintento(
         campana.numero_salida,
         telefono,
         mensaje,
         sesion,
         identificadorEnvioWhatsapp(campanaId, destinatario.id),
+        destinatario.idc,
+        destinatario.tipo_telefono ?? "celular",
+        leaseId,
       );
 
       const detalleFinal =
@@ -862,9 +915,9 @@ export async function POST(request: NextRequest) {
           conteo.enviados,
 
           conteo.errores +
-          conteo.sinTelefono +
-          conteo.preparados +
-          conteo.pendientes,
+            conteo.sinTelefono +
+            conteo.preparados +
+            conteo.pendientes,
 
           campanaId,
         ],
@@ -876,13 +929,16 @@ export async function POST(request: NextRequest) {
         ? "ENVIADA_CON_ERRORES"
         : estadoFinal;
 
-    const temporal = await esSesionWhatsappTemporal(campana.numero_salida, sesion);
+    const temporal = await esSesionWhatsappTemporal(
+      campana.numero_salida,
+      actorCampana,
+    );
 
     let limpiezaTemporal: string | null = null;
 
     if (temporal) {
       try {
-        await cerrarYEliminarWhatsappTemporal(campana.numero_salida, sesion);
+        await cerrarYEliminarWhatsappTemporal(campana.numero_salida, actorCampana);
 
         limpiezaTemporal =
           "Sesión temporal cerrada y eliminada automáticamente.";
@@ -919,6 +975,14 @@ export async function POST(request: NextRequest) {
       limpiezaTemporal,
     });
   } catch (error) {
+    if (error instanceof ErrorCampanaWhatsapp)
+      return NextResponse.json(
+        { error: error.message },
+        {
+          status: error.status,
+          headers: { "Cache-Control": "private, no-store" },
+        },
+      );
     console.error("Error enviando campaña WhatsApp:", error);
 
     let estadoRecuperado: EstadoFinalCampana | null = null;
@@ -950,9 +1014,9 @@ export async function POST(request: NextRequest) {
 
         fallidos: conteoRecuperado
           ? conteoRecuperado.errores +
-          conteoRecuperado.sinTelefono +
-          conteoRecuperado.preparados +
-          conteoRecuperado.pendientes
+            conteoRecuperado.sinTelefono +
+            conteoRecuperado.preparados +
+            conteoRecuperado.pendientes
           : 0,
 
         error:
@@ -964,5 +1028,13 @@ export async function POST(request: NextRequest) {
         status: 500,
       },
     );
+  } finally {
+    if (leaseId) {
+      try {
+        await finalizarReservaCampanaWhatsapp(campanaId, leaseId, actorCampana);
+      } catch {
+        console.error("No se pudo liberar la reserva de mantenimiento de WhatsApp.");
+      }
+    }
   }
 }

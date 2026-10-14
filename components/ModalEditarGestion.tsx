@@ -7,6 +7,7 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Trash2 } from "lucide-react";
+import { formatearFechaHoraLima } from "@/lib/fecha-lima";
 import {
   RAZONES_TAT,
   OTRAS_GESTIONES,
@@ -34,9 +35,7 @@ export type GestionParaEditar = {
 };
 
 function formatearFecha(iso: string): string {
-  const fecha = new Date(iso);
-  if (isNaN(fecha.getTime())) return iso;
-  return fecha.toLocaleString("es-PE", {
+  return formatearFechaHoraLima(iso, {
     day: "2-digit",
     month: "short",
     year: "numeric",

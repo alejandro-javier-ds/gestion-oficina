@@ -6,6 +6,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { consultarFilas } from "@/lib/postgres";
+import { requerirAccesoApi } from "@/lib/api-acceso";
+
+const ROLES_IMPORTACION = ["administrador", "supervisor"] as const;
 
 export const runtime = "nodejs";
 
@@ -19,6 +22,8 @@ type ImportRegistrado = {
 };
 
 export async function GET(request: NextRequest) {
+  const acceso = await requerirAccesoApi(ROLES_IMPORTACION);
+  if (!acceso.ok) return acceso.respuesta;
   const limiteRaw = Number(request.nextUrl.searchParams.get("limite") ?? "5");
 
   const limite =
@@ -48,5 +53,7 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({
     historial,
+  }, {
+    headers: { "Cache-Control": "private, no-store, max-age=0" },
   });
 }

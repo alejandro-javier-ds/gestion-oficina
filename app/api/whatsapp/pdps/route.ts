@@ -17,6 +17,13 @@ import { consultarFilas } from "@/lib/postgres";
 
 import { leerSesionActual } from "@/lib/auth";
 
+import {
+  agregarSeguimientoWhatsapp,
+  leerIdCampana,
+  ErrorCampanaWhatsapp,
+  CABECERAS_CAMPANAS,
+} from "@/lib/whatsapp/campanas";
+import { coincideFiltroSeguimiento } from "@/lib/whatsapp/seguimiento";
 export const runtime = "nodejs";
 
 type StatusPdp = "Posible Pago" | "100% Confiable" | "Fin de Acuerdo";
@@ -151,6 +158,15 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  if (
+    sesion.debeCambiarContrasena ||
+    (sesion.rol === "gestor" && !sesion.gestor?.trim())
+  ) {
+    return NextResponse.json(
+      { error: "No tienes una sesión autorizada para consultar clientes." },
+      { status: 403, headers: CABECERAS_CAMPANAS },
+    );
+  }
   const params = request.nextUrl.searchParams;
 
   const statusParam = params.get("statusPdp");
@@ -364,31 +380,44 @@ export async function GET(request: NextRequest) {
       new Map(clientes.map((cliente) => [cliente.idc, cliente])).values(),
     );
 
-    return NextResponse.json({
-      statusPdp: statusParam ?? null,
-
-      desde: desde || null,
-
-      hasta: hasta || null,
-
-      gestor: gestorFiltro || null,
-
-      total: clientes.length,
-
+    const campanaId = leerIdCampana(params.get("campanaId"));
+    const seguidos = await agregarSeguimientoWhatsapp(
       clientes,
-    });
-  } catch (error) {
-    console.error("Error consultando PDPs WhatsApp:", error);
+      sesion,
+      campanaId,
+    );
+    const clientesSeguidos = seguidos.filter((c) =>
+      coincideFiltroSeguimiento(
+        c.seguimiento,
+        params.get("seguimiento") ?? "TODOS",
+      ),
+    );
+    return NextResponse.json(
+      {
+        statusPdp: statusParam ?? null,
 
+        desde: desde || null,
+
+        hasta: hasta || null,
+
+        gestor: gestorFiltro || null,
+
+        total: clientesSeguidos.length,
+        clientes: clientesSeguidos,
+      },
+      { headers: CABECERAS_CAMPANAS },
+    );
+  } catch (error) {
     return NextResponse.json(
       {
         error:
-          error instanceof Error
+          error instanceof ErrorCampanaWhatsapp
             ? error.message
             : "No se pudieron consultar las PDP.",
       },
       {
-        status: 500,
+        status: error instanceof ErrorCampanaWhatsapp ? error.status : 500,
+        headers: CABECERAS_CAMPANAS,
       },
     );
   }

@@ -7,6 +7,7 @@
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { MapPin, Settings, RotateCw, Plus } from "lucide-react";
+import { formatearFechaLima } from "@/lib/fecha-lima";
 
 type Direccion = {
   id: number;
@@ -23,14 +24,7 @@ const AZUL_LINK = "#0176D3";
 
 function formatearFecha(iso: string | null): string {
   if (!iso) return "—";
-
-  const fecha = new Date(iso);
-
-  if (isNaN(fecha.getTime())) {
-    return String(iso);
-  }
-
-  return fecha.toLocaleDateString("es-PE", {
+  return formatearFechaLima(iso, {
     day: "2-digit",
     month: "short",
     year: "numeric",

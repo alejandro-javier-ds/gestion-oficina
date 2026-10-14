@@ -6,8 +6,14 @@
 import { NextResponse } from "next/server";
 
 import { consultarFilas, consultarUno } from "@/lib/postgres";
+import { requerirAccesoApi } from "@/lib/api-acceso";
+import { columnaFechaLimaSql, fechaActualLima } from "@/lib/fecha-lima";
+
+const ROLES_EXPORTACION = ["administrador", "supervisor", "abogado"] as const;
 
 export const runtime = "nodejs";
+
+const FECHA_GESTION_LIMA = columnaFechaLimaSql("fecha_hora");
 
 type FilaCompleta = {
   fecha_hora: string;
@@ -47,7 +53,9 @@ type UltimaExportacion = {
 };
 
 export async function GET() {
-  const hoy = new Date().toISOString().slice(0, 10);
+  const acceso = await requerirAccesoApi(ROLES_EXPORTACION);
+  if (!acceso.ok) return acceso.respuesta;
+  const hoy = fechaActualLima();
 
   const [muestra, resumen, ultimaExportacion] = await Promise.all([
     consultarFilas<FilaCompleta>(`
@@ -115,7 +123,7 @@ export async function GET() {
       SELECT
         COUNT(*)::int AS total,
         COUNT(*) FILTER (
-          WHERE LEFT(fecha_hora::text, 10) = $1
+          WHERE ${FECHA_GESTION_LIMA} = $1::date
         )::int AS hoy
 
       FROM gestiones

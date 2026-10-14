@@ -1,9 +1,8 @@
-// hooks/useWhatsappTelefonos.ts
-
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
 import type { ClienteWhatsapp } from "@/components/whatsapp/FilaClienteWhatsapp";
+import { normalizarCelularWhatsapp } from "@/lib/whatsapp/seguimiento";
 
 type NumeroWhatsappRegistrado = {
   numero: string;
@@ -11,21 +10,7 @@ type NumeroWhatsappRegistrado = {
   propietarioTipo?: string;
   activo?: number;
 };
-
-type Resultado = {
-  numerosWhatsappRegistrados: NumeroWhatsappRegistrado[];
-  telefonosSeleccionados: Record<string, string>;
-  telefonosManuales: Record<string, string>;
-  usarTelefonoManual: Record<string, boolean>;
-  cambiarTelefono: (id: string, telefonoId: string) => void;
-  cambiarTelefonoManual: (id: string, valor: string) => void;
-  usarManual: (id: string) => void;
-  volverRegistrado: (id: string) => void;
-  telefonoDestino: (cliente: ClienteWhatsapp) => string;
-  obtenerNumeroContactoGestor: (gestorCliente: string) => string;
-};
-
-function normalizarTexto(valor: string): string {
+function normalizarTexto(valor: string) {
   return valor
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -34,139 +19,106 @@ function normalizarTexto(valor: string): string {
     .trim()
     .toLowerCase();
 }
-
-export function useWhatsappTelefonos(): Resultado {
+export function useWhatsappTelefonos(activo = true) {
   const [numerosWhatsappRegistrados, setNumerosWhatsappRegistrados] = useState<
     NumeroWhatsappRegistrado[]
   >([]);
   const [telefonosSeleccionados, setTelefonosSeleccionados] = useState<
-    Record<string, string>
+    Record<string, string[]>
   >({});
   const [telefonosManuales, setTelefonosManuales] = useState<
-    Record<string, string>
+    Record<string, string[]>
   >({});
-  const [usarTelefonoManual, setUsarTelefonoManual] = useState<
-    Record<string, boolean>
-  >({});
-
-  const cargarNumerosWhatsapp = useCallback(async (signal?: AbortSignal) => {
-    try {
-      const response = await fetch("/api/whatsapp/playwright/estados", {
-        cache: "no-store",
-        signal,
-      });
-
-      if (!response.ok) return;
-
-      const data = (await response.json()) as {
-        numeros?: NumeroWhatsappRegistrado[];
-      };
-
-      setNumerosWhatsappRegistrados(data.numeros ?? []);
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
-      setNumerosWhatsappRegistrados([]);
-    }
-  }, []);
-
   useEffect(() => {
+    if (!activo) return;
     const controller = new AbortController();
-
-    void cargarNumerosWhatsapp(controller.signal);
-
-    const intervalo = window.setInterval(() => {
-      void cargarNumerosWhatsapp();
-    }, 10_000);
-
+    let cargando = false;
+    async function cargar() {
+      if (cargando || controller.signal.aborted) return;
+      cargando = true;
+      try {
+        const r = await fetch("/api/whatsapp/playwright/estados", {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!r.ok) return;
+        const data = await r.json();
+        if (!controller.signal.aborted)
+          setNumerosWhatsappRegistrados(data.numeros ?? []);
+      } catch {
+      } finally {
+        cargando = false;
+      }
+    }
+    void cargar();
+    const timer = window.setInterval(() => void cargar(), 10000);
     return () => {
       controller.abort();
-      window.clearInterval(intervalo);
+      window.clearInterval(timer);
     };
-  }, [cargarNumerosWhatsapp]);
-
-  const cambiarTelefono = useCallback((id: string, telefonoId: string) => {
+  }, [activo]);
+  const cambiarTelefono = useCallback((id: string, entrada: string) => {
+    const numero = normalizarCelularWhatsapp(entrada);
+    if (!numero) return;
+    setTelefonosSeleccionados((actuales) => {
+      const seleccion = actuales[id] ?? [];
+      return {
+        ...actuales,
+        [id]: seleccion.includes(numero)
+          ? seleccion.filter((n) => n !== numero)
+          : [...seleccion, numero],
+      };
+    });
+  }, []);
+  const seleccionarTelefonos = useCallback((id: string, numeros: string[]) => {
     setTelefonosSeleccionados((actuales) => ({
       ...actuales,
-      [id]: telefonoId,
+      [id]: [
+        ...new Set(numeros.map(normalizarCelularWhatsapp).filter(Boolean)),
+      ],
     }));
   }, []);
-
-  const cambiarTelefonoManual = useCallback((id: string, valor: string) => {
+  const agregarTelefonoManual = useCallback((id: string, entrada: string) => {
+    const numero = normalizarCelularWhatsapp(entrada);
+    if (!numero)
+      throw new Error("Ingresa un celular peruano válido de nueve dígitos.");
     setTelefonosManuales((actuales) => ({
       ...actuales,
-      [id]: valor,
+      [id]: [...new Set([...(actuales[id] ?? []), numero])],
     }));
-  }, []);
-
-  const usarManual = useCallback((id: string) => {
-    setUsarTelefonoManual((actuales) => ({
+    setTelefonosSeleccionados((actuales) => ({
       ...actuales,
-      [id]: true,
+      [id]: [...new Set([...(actuales[id] ?? []), numero])],
     }));
   }, []);
-
-  const volverRegistrado = useCallback((id: string) => {
-    setUsarTelefonoManual((actuales) => ({
-      ...actuales,
-      [id]: false,
-    }));
+  const limpiarTelefonos = useCallback(() => {
+    setTelefonosSeleccionados({});
+    setTelefonosManuales({});
   }, []);
-
   const telefonoDestino = useCallback(
-    (cliente: ClienteWhatsapp): string => {
-      if (usarTelefonoManual[cliente.id]) {
-        return telefonosManuales[cliente.id] ?? "";
-      }
-
-      const seleccionado = telefonosSeleccionados[cliente.id];
-
-      if (seleccionado) {
-        return (
-          cliente.telefonos.find(
-            (telefono) => String(telefono.id_phone) === seleccionado,
-          )?.phone ?? ""
-        );
-      }
-
-      return (
-        cliente.telefonos.find(
-          (telefono) =>
-            telefono.activo === 1 &&
-            telefono.tipo_telefono.toLowerCase() === "celular",
-        )?.phone ?? ""
-      );
-    },
-    [telefonosManuales, telefonosSeleccionados, usarTelefonoManual],
+    (cliente: ClienteWhatsapp) =>
+      (telefonosSeleccionados[cliente.id] ?? []).join(" · "),
+    [telefonosSeleccionados],
   );
-
   const obtenerNumeroContactoGestor = useCallback(
-    (gestorCliente: string): string => {
-      const gestorNormalizado = normalizarTexto(gestorCliente);
-
-      if (!gestorNormalizado) return "";
-
-      const numeroGestor = numerosWhatsappRegistrados.find((item) => {
-        if (item.activo === 0) return false;
-
-        const propietarioNormalizado = normalizarTexto(item.propietario);
-
-        return propietarioNormalizado === gestorNormalizado;
-      });
-
-      return numeroGestor?.numero ?? "";
+    (gestorCliente: string) => {
+      const nombre = normalizarTexto(gestorCliente);
+      return nombre
+        ? (numerosWhatsappRegistrados.find(
+            (n) => n.activo !== 0 && normalizarTexto(n.propietario) === nombre,
+          )?.numero ?? "")
+        : "";
     },
     [numerosWhatsappRegistrados],
   );
-
   return {
     numerosWhatsappRegistrados,
     telefonosSeleccionados,
     telefonosManuales,
-    usarTelefonoManual,
     cambiarTelefono,
-    cambiarTelefonoManual,
-    usarManual,
-    volverRegistrado,
+    seleccionarTelefonos,
+    agregarTelefonoManual,
+    limpiarTelefonos,
     telefonoDestino,
     obtenerNumeroContactoGestor,
   };

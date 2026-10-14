@@ -9,11 +9,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { consultarFilas, consultarUno } from "@/lib/postgres";
 import { leerSesionActual } from "@/lib/auth";
+import { columnaFechaLimaSql, fechaActualLima, inicioMesActualLima } from "@/lib/fecha-lima";
 
 export const runtime = "nodejs";
 
 const META_INTENSIDAD = 15;
 const META_COBERTURA = 100;
+const FECHA_GESTION_LIMA = columnaFechaLimaSql("g.fecha_hora");
+const FECHA_GESTION_BASE_LIMA = columnaFechaLimaSql("g0.fecha_hora");
+const FECHA_PROMESA_LIMA = columnaFechaLimaSql("pp.fecha_hora");
+const FECHA_CITA_LIMA = columnaFechaLimaSql("ci.fecha_hora");
 
 type FilaResumenDiarioRaw = {
   fecha: string;
@@ -21,6 +26,8 @@ type FilaResumenDiarioRaw = {
   funcionario: string | null;
   gestionesRealizadas: number;
   clientesDistintosConTat: number;
+  gestionesCarteraActual: number;
+  clientesDistintosConTatCarteraActual: number;
   promesasCreadas: number;
   promesasCumplidas: number;
   citasAgendadas: number;
@@ -82,12 +89,9 @@ function rangoMesActual(): {
   desde: string;
   hasta: string;
 } {
-  const hoy = new Date();
-  const inicio = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
-
   return {
-    desde: inicio.toISOString().slice(0, 10),
-    hasta: hoy.toISOString().slice(0, 10),
+    desde: inicioMesActualLima(),
+    hasta: fechaActualLima(),
   };
 }
 
@@ -100,7 +104,13 @@ export async function GET(request: NextRequest) {
   const sesion = await leerSesionActual();
 
   if (!sesion) {
-    return NextResponse.json({ error: "No autenticado" }, { status: 401 });
+    return NextResponse.json(
+      { error: "No autenticado" },
+      {
+        status: 401,
+        headers: { "Cache-Control": "private, no-store, max-age=0" },
+      },
+    );
   }
 
   const params = request.nextUrl.searchParams;
@@ -134,8 +144,7 @@ export async function GET(request: NextRequest) {
           COUNT(*)::int AS "totalGestiones",
           COUNT(DISTINCT g.idc)::int AS "clientesDistintos"
         FROM gestiones g
-        WHERE LEFT(g.fecha_hora, 10)
-          BETWEEN $1 AND $2
+        WHERE ${FECHA_GESTION_LIMA} BETWEEN $1::date AND $2::date
       `,
     [desde, hasta],
   );
@@ -143,29 +152,45 @@ export async function GET(request: NextRequest) {
   const porGestor = await consultarFilas<FilaPorGestor>(
     `
         SELECT
-          g.usuario_gestor_oficina AS gestor,
+          c.gestor AS gestor,
 
-          COUNT(*)::int
+          COUNT(*) FILTER (
+            WHERE EXISTS (
+              SELECT 1
+              FROM cuentas ca
+              WHERE ca.idc = g.idc
+                AND ca.gestor = c.gestor
+                AND ${CONDICION_CARTERA}
+            )
+          )::int
             AS "gestionesRealizadas",
 
           COUNT(
-            DISTINCT CASE
-              WHEN g.categoria = 'TAT'
-              THEN g.idc
-            END
+            DISTINCT g.idc
+          ) FILTER (
+            WHERE g.categoria = 'TAT'
+              AND EXISTS (
+                SELECT 1
+                FROM cuentas ca
+                WHERE ca.idc = g.idc
+                  AND ca.gestor = c.gestor
+                  AND ${CONDICION_CARTERA}
+              )
           )::int
             AS "clientesDistintosConTat"
 
         FROM gestiones g
 
-        WHERE LEFT(g.fecha_hora, 10)
-          BETWEEN $1 AND $2
+        ${JOIN_CUENTA_REPRESENTATIVA}
+
+        WHERE ${FECHA_GESTION_LIMA} BETWEEN $1::date AND $2::date
+          AND c.gestor IS NOT NULL
 
         GROUP BY
-          g.usuario_gestor_oficina
+          c.gestor
 
         ORDER BY
-          g.usuario_gestor_oficina
+          c.gestor
       `,
     [desde, hasta],
   );
@@ -173,16 +198,15 @@ export async function GET(request: NextRequest) {
   const porDia = await consultarFilas<FilaPorDia>(
     `
         SELECT
-          LEFT(g.fecha_hora, 10) AS fecha,
+          TO_CHAR(${FECHA_GESTION_LIMA}, 'YYYY-MM-DD') AS fecha,
           COUNT(*)::int AS gestiones
 
         FROM gestiones g
 
-        WHERE LEFT(g.fecha_hora, 10)
-          BETWEEN $1 AND $2
+        WHERE ${FECHA_GESTION_LIMA} BETWEEN $1::date AND $2::date
 
         GROUP BY
-          LEFT(g.fecha_hora, 10)
+          ${FECHA_GESTION_LIMA}
 
         ORDER BY
           fecha
@@ -193,10 +217,9 @@ export async function GET(request: NextRequest) {
   const resumenDiarioRaw = await consultarFilas<FilaResumenDiarioRaw>(
     `
         SELECT
-          g.fecha,
+          TO_CHAR(g.fecha, 'YYYY-MM-DD') AS fecha,
 
-          g.usuario_gestor_oficina
-            AS gestor,
+          c.gestor AS gestor,
 
           c.funcionario,
 
@@ -211,46 +234,85 @@ export async function GET(request: NextRequest) {
           )::int
             AS "clientesDistintosConTat",
 
+          COUNT(*) FILTER (
+            WHERE EXISTS (
+              SELECT 1
+              FROM cuentas ca
+              WHERE ca.idc = g.idc
+                AND ca.gestor = c.gestor
+                AND ${CONDICION_CARTERA}
+            )
+          )::int
+            AS "gestionesCarteraActual",
+
+          COUNT(
+            DISTINCT g.idc
+          ) FILTER (
+            WHERE g.categoria = 'TAT'
+              AND EXISTS (
+                SELECT 1
+                FROM cuentas ca
+                WHERE ca.idc = g.idc
+                  AND ca.gestor = c.gestor
+                  AND ${CONDICION_CARTERA}
+              )
+          )::int
+            AS "clientesDistintosConTatCarteraActual",
+
           (
             SELECT COUNT(*)::int
             FROM promesas_pago pp
-            WHERE pp.usuario_gestor_oficina =
-                  g.usuario_gestor_oficina
-              AND LEFT(pp.fecha_hora, 10) = g.fecha
+            WHERE EXISTS (
+                SELECT 1
+                FROM cuentas cp
+                WHERE cp.codcuentacobranza = pp.codcuentacobranza
+                  AND cp.gestor = c.gestor
+              )
+              AND ${FECHA_PROMESA_LIMA} = g.fecha
           ) AS "promesasCreadas",
 
           (
             SELECT COUNT(*)::int
             FROM promesas_pago pp
-            WHERE pp.usuario_gestor_oficina =
-                  g.usuario_gestor_oficina
-              AND LEFT(pp.fecha_hora, 10) = g.fecha
+            WHERE EXISTS (
+                SELECT 1
+                FROM cuentas cp
+                WHERE cp.codcuentacobranza = pp.codcuentacobranza
+                  AND cp.gestor = c.gestor
+              )
+              AND ${FECHA_PROMESA_LIMA} = g.fecha
               AND pp.estado = 'cumplida'
           ) AS "promesasCumplidas",
 
           (
             SELECT COUNT(*)::int
             FROM citas ci
-            WHERE ci.usuario_gestor_oficina =
-                  g.usuario_gestor_oficina
-              AND LEFT(ci.fecha_hora, 10) = g.fecha
+            WHERE EXISTS (
+                SELECT 1
+                FROM cuentas cc
+                WHERE cc.idc = ci.idc
+                  AND cc.gestor = c.gestor
+                  AND cc.activo = 1
+                  AND UPPER(TRIM(cc.estado_cartera)) IN ('ACTIVA', 'CASTIGO')
+              )
+              AND ${FECHA_CITA_LIMA} = g.fecha
           ) AS "citasAgendadas"
 
         FROM (
           SELECT
             g0.*,
-            LEFT(g0.fecha_hora, 10) AS fecha
+            ${FECHA_GESTION_BASE_LIMA} AS fecha
           FROM gestiones g0
         ) g
 
         ${JOIN_CUENTA_REPRESENTATIVA}
 
-        WHERE g.fecha
-          BETWEEN $1 AND $2
+        WHERE g.fecha BETWEEN $1::date AND $2::date
+          AND c.gestor IS NOT NULL
 
         GROUP BY
           g.fecha,
-          g.usuario_gestor_oficina,
+          c.gestor,
           c.funcionario
 
         ORDER BY
@@ -261,16 +323,23 @@ export async function GET(request: NextRequest) {
 
   const resumenDiario = resumenDiarioRaw.map((fila) => {
     const totalCartera = mapaCartera.get(fila.gestor) ?? 0;
+    const {
+      gestionesCarteraActual,
+      clientesDistintosConTatCarteraActual,
+      ...filaVisible
+    } = fila;
 
     return {
-      ...fila,
+      ...filaVisible,
 
       intensidadDiaria:
-        totalCartera > 0 ? fila.gestionesRealizadas / totalCartera : 0,
+        totalCartera > 0 ? gestionesCarteraActual / totalCartera : 0,
 
       contactabilidadDiaria:
         totalCartera > 0
-          ? Math.round((fila.clientesDistintosConTat / totalCartera) * 100)
+          ? Math.round(
+              (clientesDistintosConTatCarteraActual / totalCartera) * 100,
+            )
           : 0,
 
       promesasCumplidasPorcentaje:
@@ -299,10 +368,16 @@ export async function GET(request: NextRequest) {
   const kpisAcumulado = await consultarUno<Total>(
     `
         SELECT
-          COUNT(*)::int AS total
+          COUNT(*) FILTER (
+            WHERE EXISTS (
+              SELECT 1
+              FROM cuentas ca
+              WHERE ca.idc = g.idc
+                AND ${CONDICION_CARTERA}
+            )
+          )::int AS total
         FROM gestiones g
-        WHERE LEFT(g.fecha_hora, 10)
-          BETWEEN $1 AND $2
+        WHERE ${FECHA_GESTION_LIMA} BETWEEN $1::date AND $2::date
       `,
     [desdeAcumulado, hastaAcumulado],
   );
@@ -310,10 +385,16 @@ export async function GET(request: NextRequest) {
   const clientesDistintosAcumulado = await consultarUno<Total>(
     `
         SELECT
-          COUNT(DISTINCT g.idc)::int AS total
+          COUNT(DISTINCT g.idc) FILTER (
+            WHERE EXISTS (
+              SELECT 1
+              FROM cuentas ca
+              WHERE ca.idc = g.idc
+                AND ${CONDICION_CARTERA}
+            )
+          )::int AS total
         FROM gestiones g
-        WHERE LEFT(g.fecha_hora, 10)
-          BETWEEN $1 AND $2
+        WHERE ${FECHA_GESTION_LIMA} BETWEEN $1::date AND $2::date
       `,
     [desdeAcumulado, hastaAcumulado],
   );
@@ -377,8 +458,7 @@ export async function GET(request: NextRequest) {
 
         FROM promesas_pago
 
-        WHERE LEFT(fecha_hora, 10)
-          BETWEEN $1 AND $2
+        WHERE ${columnaFechaLimaSql("fecha_hora")} BETWEEN $1::date AND $2::date
       `,
     [desde, hasta],
   );
@@ -416,5 +496,7 @@ export async function GET(request: NextRequest) {
 
       rotas: promesasPorEstado?.rotas ?? 0,
     },
+  }, {
+    headers: { "Cache-Control": "private, no-store, max-age=0" },
   });
 }

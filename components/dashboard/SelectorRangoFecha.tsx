@@ -15,6 +15,7 @@ import {
   CalendarDays,
   Check,
 } from "lucide-react";
+import { fechaActualLima, sumarDiasCalendario } from "@/lib/fecha-lima";
 
 export type RangoFecha = { desde: string; hasta: string; etiqueta: string };
 
@@ -24,17 +25,13 @@ type Atajo = {
   calcular: () => { desde: string; hasta: string };
 };
 
-function formatearISO(fecha: Date): string {
-  return fecha.toISOString().slice(0, 10);
-}
-
 function formatearCorta(iso: string): string {
   const [, mes, dia] = iso.split("-");
   return `${dia}/${mes}`;
 }
 
-function hoy(): Date {
-  return new Date();
+function hoy(): string {
+  return fechaActualLima();
 }
 
 const ATAJOS: Atajo[] = [
@@ -42,7 +39,7 @@ const ATAJOS: Atajo[] = [
     etiqueta: "Hoy",
     icono: <Clock size={14} />,
     calcular: () => {
-      const f = formatearISO(hoy());
+      const f = hoy();
       return { desde: f, hasta: f };
     },
   },
@@ -50,9 +47,7 @@ const ATAJOS: Atajo[] = [
     etiqueta: "Ayer",
     icono: <History size={14} />,
     calcular: () => {
-      const d = hoy();
-      d.setDate(d.getDate() - 1);
-      const f = formatearISO(d);
+      const f = sumarDiasCalendario(hoy(), -1);
       return { desde: f, hasta: f };
     },
   },
@@ -61,9 +56,7 @@ const ATAJOS: Atajo[] = [
     icono: <TrendingUp size={14} />,
     calcular: () => {
       const fin = hoy();
-      const inicio = hoy();
-      inicio.setDate(inicio.getDate() - 6);
-      return { desde: formatearISO(inicio), hasta: formatearISO(fin) };
+      return { desde: sumarDiasCalendario(fin, -6), hasta: fin };
     },
   },
   {
@@ -71,9 +64,7 @@ const ATAJOS: Atajo[] = [
     icono: <TrendingUp size={14} />,
     calcular: () => {
       const fin = hoy();
-      const inicio = hoy();
-      inicio.setDate(inicio.getDate() - 29);
-      return { desde: formatearISO(inicio), hasta: formatearISO(fin) };
+      return { desde: sumarDiasCalendario(fin, -29), hasta: fin };
     },
   },
   {
@@ -81,8 +72,7 @@ const ATAJOS: Atajo[] = [
     icono: <CalendarDays size={14} />,
     calcular: () => {
       const fin = hoy();
-      const inicio = new Date(fin.getFullYear(), fin.getMonth(), 1);
-      return { desde: formatearISO(inicio), hasta: formatearISO(fin) };
+      return { desde: `${fin.slice(0, 7)}-01`, hasta: fin };
     },
   },
 ];

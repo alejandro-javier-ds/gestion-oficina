@@ -1,0 +1,12 @@
+[Unit]
+Description=Respaldo diario de las sesiones cifradas de WhatsApp
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 America/Lima
+AccuracySec=1m
+RandomizedDelaySec=0
+Persistent=false
+Unit=whatsapp-backup.service
+
+[Install]
+WantedBy=timers.target

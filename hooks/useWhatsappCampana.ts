@@ -1,661 +1,445 @@
-// hooks/useWhatsappCampana.ts
-// Orquesta preparación, guardado, progreso y envío REAL de campañas.
-// Los endpoints y payloads existentes se mantienen.
-
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ClienteWhatsapp } from "@/components/whatsapp/FilaClienteWhatsapp";
-import type { PropuestaId } from "@/components/whatsapp/CampanasWhatsapp";
+import { destinosElegidosWhatsapp } from "@/lib/whatsapp/seguimiento";
 import { obtenerPlantilla } from "@/lib/whatsapp/plantillas";
+import type { PropuestaId } from "@/components/whatsapp/CampanasWhatsapp";
 import type { MetadataWhatsappSeleccion } from "./useWhatsappSeleccion";
+import {
+  SIN_CONFIRMACIONES_WHATSAPP,
+  type ConfirmacionesWhatsapp,
+} from "@/components/whatsapp/ControlSeguimientoWhatsapp";
 
-type RangoWhatsapp = {
-  desde: string;
-  hasta: string;
-  etiqueta: string;
-};
-
-type MensajesIndividuales = Record<string, string>;
-
-type RespuestaClientesWhatsapp = {
-  clientes: ClienteWhatsapp[];
-  total: number;
-};
-
-type DestinatarioWhatsapp = {
+type Destino = {
   idc: string;
   cliente: string;
-  gestor?: string | null;
+  gestor: string | null;
   telefonoDestino: string;
   tipoTelefono: string;
-  estado: string;
-  error?: string | null;
   mensaje: string;
-  tenor?: string | null;
+  estado: "PREPARADO";
+  error: null;
+  tenor: string | null;
 };
-
-type Resultado = {
-  campanaId: number | null;
-  enviandoCampana: boolean;
-  preparando: boolean;
-  procesados: number;
-  preparados: number;
-  sinTelefono: number;
-  fallidos: number;
-  prepararEnvio: () => Promise<void>;
-  confirmarCampaña: () => Promise<void>;
-  reiniciarEstadoCampana: () => void;
-};
-
-export function useWhatsappCampana({
-  propuestaActual,
-  rango,
-  gestor,
-  clientes,
-  seleccionados,
-  cantidadSeleccionados,
-  obtenerMetadata,
-  numeroSalida,
-  usarTelefonoManual,
-  telefonosManuales,
-  telefonosSeleccionados,
-  mensajeBase,
-  mensajesIndividuales,
-  generarMensajeCliente,
-  setClientesPreparados,
-  setMensajesIndividuales,
-  setMensajeBaseOriginal,
-  setClienteRevision,
-  setEstadoAbierto,
-  setRevisionAbierta,
-  setClienteVista,
-  onError,
-}: {
+type Props = {
   propuestaActual: string;
-  rango: RangoWhatsapp;
+  rango: { desde: string; hasta: string; etiqueta: string };
   gestor: string;
   clientes: ClienteWhatsapp[];
   seleccionados: string[];
   cantidadSeleccionados: number;
   obtenerMetadata: (id: string) => MetadataWhatsappSeleccion | undefined;
   numeroSalida: string;
-  usarTelefonoManual: Record<string, boolean>;
-  telefonosManuales: Record<string, string>;
-  telefonosSeleccionados: Record<string, string>;
+  telefonosManuales: Record<string, string[]>;
+  telefonosSeleccionados: Record<string, string[]>;
   mensajeBase: string;
-  mensajesIndividuales: MensajesIndividuales;
+  mensajesIndividuales: Record<string, string>;
   generarMensajeCliente: (cliente: ClienteWhatsapp, base: string) => string;
   setClientesPreparados: (clientes: ClienteWhatsapp[]) => void;
-  setMensajesIndividuales: (mensajes: MensajesIndividuales) => void;
+  setMensajesIndividuales: (mensajes: Record<string, string>) => void;
   setMensajeBaseOriginal: (mensaje: string) => void;
   setClienteRevision: (cliente: ClienteWhatsapp | null) => void;
   setEstadoAbierto: (abierto: boolean) => void;
   setRevisionAbierta: (abierto: boolean) => void;
   setClienteVista: (cliente: ClienteWhatsapp | null) => void;
   onError?: (mensaje: string) => void;
-}): Resultado {
+  campanaSeguimientoId?: number | null;
+  nombreCampanaGuardada?: string;
+  resolverClientes?: () => Promise<ClienteWhatsapp[]>;
+  plantillaCliente?: (cliente: ClienteWhatsapp) => string;
+  adaptarClientesGuardados?: (clientes: ClienteWhatsapp[]) => ClienteWhatsapp[];
+  onGuardada?: (id: number) => void;
+  onFinalizar?: () => void;
+  puedeEnviar?: boolean;
+};
+export function useWhatsappCampana(props: Props) {
   const [campanaId, setCampanaId] = useState<number | null>(null);
+  const [versionSeleccion, setVersionSeleccion] = useState<string | null>(null);
   const [preparando, setPreparando] = useState(false);
   const [enviandoCampana, setEnviandoCampana] = useState(false);
   const [procesados, setProcesados] = useState(0);
-  const [preparados, setPreparados] = useState(0);
-  const [sinTelefono, setSinTelefono] = useState(0);
-  const [fallidos, setFallidos] = useState(0);
-
-  const reiniciarEstadoCampana = useCallback(() => {
-    setCampanaId(null);
-    setPreparando(false);
-    setEnviandoCampana(false);
-    setProcesados(0);
-    setPreparados(0);
-    setSinTelefono(0);
-    setFallidos(0);
-  }, []);
-
-  useEffect(() => {
-    if (!enviandoCampana || !campanaId) return;
-
-    let cancelado = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    const actualizarProgreso = async () => {
-      if (cancelado) return;
-
-      try {
-        const response = await fetch(
-          `/api/whatsapp/progreso?campanaId=${campanaId}`,
-          { cache: "no-store" },
-        );
-
-        if (!response.ok) {
-          throw new Error("No se pudo consultar el progreso.");
-        }
-
-        const data = (await response.json()) as {
-          total?: number;
-          preparados?: number;
-          enviados?: number;
-          errores?: number;
-          sinTelefono?: number;
-          procesados?: number;
-          estado?: string;
-        };
-
-        if (cancelado) return;
-
-        const totalBd = Number(data.total ?? cantidadSeleccionados);
-        const preparadosBd = Number(data.preparados ?? 0);
-        const enviadosBd = Number(data.enviados ?? 0);
-        const erroresBd = Number(data.errores ?? 0);
-        const sinTelefonoBd = Number(data.sinTelefono ?? 0);
-        const procesadosBd = Number(
-          data.procesados ?? enviadosBd + erroresBd + sinTelefonoBd,
-        );
-
-        setProcesados(Math.min(procesadosBd, totalBd));
-        setPreparados(Math.max(preparadosBd, 0));
-        setSinTelefono(Math.max(sinTelefonoBd, 0));
-        setFallidos(Math.max(erroresBd, 0));
-
-        if (
-          data.estado === "ENVIADA" ||
-          data.estado === "ENVIADA_CON_ERRORES" ||
-          data.estado === "ERROR"
-        ) {
-          return;
-        }
-      } catch (error) {
-        console.warn("[WhatsApp] Error consultando progreso:", error);
-      }
-
-      if (!cancelado) {
-        timer = setTimeout(actualizarProgreso, 700);
-      }
+  const [contadores, setContadores] = useState({
+    preparados: 0,
+    sinTelefono: 0,
+    fallidos: 0,
+  });
+  const [borrador, setBorrador] = useState<ClienteWhatsapp[]>([]);
+  const [errorCampana, setErrorCampana] = useState("");
+  const [confirmaciones, setConfirmaciones] = useState<ConfirmacionesWhatsapp>(
+    SIN_CONFIRMACIONES_WHATSAPP,
+  );
+  const ocupado = useRef(false);
+  const {
+    telefonosSeleccionados,
+    telefonosManuales,
+    mensajesIndividuales,
+    obtenerMetadata,
+  } = props;
+  const seleccionActual = useMemo(() => {
+    const destinos: Destino[] = [];
+    const advertencias = {
+      anteriores: false,
+      fallidos: false,
+      inciertos: false,
     };
-
-    void actualizarProgreso();
-
-    return () => {
-      cancelado = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, [campanaId, enviandoCampana, cantidadSeleccionados]);
-
-  const prepararEnvio = useCallback(async () => {
-    if (cantidadSeleccionados === 0 || !numeroSalida) return;
-
-    setProcesados(0);
-    setPreparados(0);
-    setSinTelefono(0);
-    setFallidos(0);
-    setCampanaId(null);
-    setEstadoAbierto(true);
-    setPreparando(true);
-
     try {
-      const campanasSeleccionadas = Array.from(
-        new Set(
-          seleccionados
-            .map((id) => obtenerMetadata(id)?.campana)
-            .filter((valor): valor is string => Boolean(valor)),
-        ),
-      );
-
-      const clientesPorId = new Map<string, ClienteWhatsapp>();
-
-      for (const campanaCliente of campanasSeleccionadas) {
-        const params = new URLSearchParams({
-          campana: campanaCliente,
-          vista: "todos",
-          desde: rango.desde,
-          hasta: rango.hasta,
-        });
-
-        if (gestor) params.set("gestor", gestor);
-
-        const response = await fetch(
-          `/api/whatsapp/clientes?${params.toString()}`,
-          { cache: "no-store" },
+      for (const cliente of borrador) {
+        const telefonos = destinosElegidosWhatsapp(
+          cliente,
+          telefonosSeleccionados[cliente.id] ?? [],
+          telefonosManuales[cliente.id] ?? [],
         );
-
-        if (!response.ok) {
-          const data = (await response.json().catch(() => null)) as {
-            error?: string;
-          } | null;
-
-          throw new Error(
-            data?.error ??
-            `No se pudieron recuperar los destinatarios de la campaña ${campanaCliente}.`,
+        for (const t of telefonos) {
+          const estado = cliente.seguimiento?.telefonos.find(
+            (n) => n.numero === t.numero,
           );
-        }
-
-        const data = (await response.json()) as RespuestaClientesWhatsapp;
-
-        for (const cliente of data.clientes) {
-          if (seleccionados.includes(cliente.id)) {
-            clientesPorId.set(cliente.id, cliente);
-          }
-        }
-      }
-
-      for (const cliente of clientes) {
-        if (seleccionados.includes(cliente.id)) {
-          clientesPorId.set(cliente.id, cliente);
-        }
-      }
-
-      const clientesSeleccionados = Array.from(clientesPorId.values());
-
-      let procesadosActuales = 0;
-      let preparadosActuales = 0;
-      let sinTelefonoActuales = 0;
-      let fallidosActuales = 0;
-
-      const destinatarios: DestinatarioWhatsapp[] = [];
-      const mensajesGenerados: MensajesIndividuales = {};
-
-      for (const cliente of clientesSeleccionados) {
-        const metadata = obtenerMetadata(cliente.id);
-        const campanaCliente = metadata?.campana;
-
-        const plantillaCliente = campanaCliente
-          ? obtenerPlantilla(campanaCliente as PropuestaId)
-          : mensajeBase;
-
-        const mensajeFinal =
-          mensajesIndividuales[cliente.id] ??
-          generarMensajeCliente(cliente, plantillaCliente);
-
-        mensajesGenerados[cliente.id] = mensajeFinal;
-
-        try {
-          const usaManual = usarTelefonoManual[cliente.id] ?? false;
-
-          /*
-           * MODO MANUAL
-           *
-           * Si el usuario decidió introducir manualmente un teléfono,
-           * respetamos esa decisión y preparamos solamente ese número.
-           */
-          if (usaManual) {
-            const destinoManual = (telefonosManuales[cliente.id] ?? "")
-              .replace(/\D/g, "")
-              .replace(/^51/, "");
-
-            if (/^9\d{8}$/.test(destinoManual)) {
-              destinatarios.push({
-                idc: cliente.idc,
-                cliente: cliente.cliente,
-                gestor: cliente.gestor,
-                telefonoDestino: destinoManual,
-                tipoTelefono: "manual",
-                estado: "PREPARADO",
-                error: null,
-                mensaje: mensajeFinal,
-                tenor: campanaCliente ?? null,
-              });
-
-              preparadosActuales++;
-            } else {
-              destinatarios.push({
-                idc: cliente.idc,
-                cliente: cliente.cliente,
-                gestor: cliente.gestor,
-                telefonoDestino: destinoManual,
-                tipoTelefono: "manual",
-                estado: "SIN_TELEFONO",
-                error: "No tiene un celular peruano válido.",
-                mensaje: mensajeFinal,
-                tenor: campanaCliente ?? null,
-              });
-
-              sinTelefonoActuales++;
-            }
-          } else {
-            /*
-             * MODO REGISTRADO
-             *
-             * Ya no escogemos solamente un celular.
-             *
-             * Ahora se preparan TODOS los celulares:
-             * - activos
-             * - tipo celular
-             * - formato peruano válido
-             *
-             * Además se eliminan números repetidos.
-             */
-
-            const telefonoElegido = telefonosSeleccionados[cliente.id];
-
-            const celularesActivos = cliente.telefonos.filter(
-              (telefono) =>
-                telefono.activo === 1 &&
-                telefono.tipo_telefono.toLowerCase() === "celular",
+          advertencias.anteriores ||= !!estado?.enviosAnteriores;
+          advertencias.fallidos ||=
+            estado?.estado === "FALLIDO" || !!estado?.requiereReintento;
+          advertencias.inciertos ||= !!estado?.resultadosAnterioresInciertos;
+          const mensaje = mensajesIndividuales[cliente.id] ?? "";
+          if (!mensaje.trim())
+            throw new Error(
+              "Completa el mensaje de cada cliente antes de confirmar.",
             );
-
-            /*
-             * El teléfono seleccionado visualmente se coloca primero.
-             *
-             * Esto conserva el comportamiento de la interfaz y sirve
-             * como teléfono principal para la revisión visual.
-             *
-             * PERO ya no excluye los demás celulares.
-             */
-            const celularesOrdenados = [...celularesActivos].sort((a, b) => {
-              const aElegido =
-                String(a.id_phone) === String(telefonoElegido ?? "");
-
-              const bElegido =
-                String(b.id_phone) === String(telefonoElegido ?? "");
-
-              if (aElegido === bElegido) {
-                return 0;
-              }
-
-              return aElegido ? -1 : 1;
-            });
-
-            /*
-             * Clave = teléfono ya normalizado.
-             *
-             * Esto evita preparar dos mensajes para el mismo número
-             * aunque la BD contenga el celular duplicado.
-             */
-            const numerosUnicos = new Map<
-              string,
-              (typeof celularesOrdenados)[number]
-            >();
-
-            for (const telefono of celularesOrdenados) {
-              const numeroNormalizado = String(telefono.phone ?? "")
-                .replace(/\D/g, "")
-                .replace(/^51/, "");
-
-              /*
-               * Solo celulares peruanos válidos:
-               * 9 dígitos y comienzan por 9.
-               */
-              if (!/^9\d{8}$/.test(numeroNormalizado)) {
-                continue;
-              }
-
-              if (!numerosUnicos.has(numeroNormalizado)) {
-                numerosUnicos.set(numeroNormalizado, telefono);
-              }
-            }
-
-            /*
-             * Ningún número válido.
-             *
-             * Guardamos UNA sola fila SIN_TELEFONO para ese cliente,
-             * no una fila de error por cada número inválido.
-             */
-            if (numerosUnicos.size === 0) {
-              destinatarios.push({
-                idc: cliente.idc,
-                cliente: cliente.cliente,
-                gestor: cliente.gestor,
-                telefonoDestino: "",
-                tipoTelefono: "",
-                estado: "SIN_TELEFONO",
-                error: "No tiene un celular peruano válido.",
-                mensaje: mensajeFinal,
-                tenor: campanaCliente ?? null,
-              });
-
-              sinTelefonoActuales++;
-            } else {
-              /*
-               * IMPORTANTE:
-               *
-               * Una fila independiente por cada teléfono.
-               *
-               * Ejemplo:
-               *
-               * cliente A -> 987111111
-               * cliente A -> 987222222
-               * cliente A -> 987333333
-               *
-               * /api/whatsapp/enviar procesará cada fila por separado.
-               */
-              for (const [numero, telefono] of numerosUnicos) {
-                destinatarios.push({
-                  idc: cliente.idc,
-                  cliente: cliente.cliente,
-                  gestor: cliente.gestor,
-                  telefonoDestino: numero,
-                  tipoTelefono: telefono.tipo_telefono,
-                  estado: "PREPARADO",
-                  error: null,
-                  mensaje: mensajeFinal,
-                  tenor: campanaCliente ?? null,
-                });
-
-                preparadosActuales++;
-              }
-            }
-          }
-        } catch {
-          destinatarios.push({
+          destinos.push({
             idc: cliente.idc,
             cliente: cliente.cliente,
             gestor: cliente.gestor,
-            telefonoDestino: "",
-            tipoTelefono: "",
-            estado: "ERROR",
-            error: "Error al validar el destinatario.",
-            mensaje: mensajeFinal,
-            tenor: campanaCliente ?? null,
+            telefonoDestino: t.numero,
+            tipoTelefono: t.tipoTelefono,
+            mensaje,
+            estado: "PREPARADO",
+            error: null,
+            tenor: obtenerMetadata(cliente.id)?.campana ?? null,
           });
-
-          fallidosActuales++;
         }
-
-        /*
-         * procesadosActuales sigue representando clientes procesados
-         * durante la preparación visual.
-         *
-         * preparadosActuales representa DESTINOS reales preparados.
-         */
-        procesadosActuales++;
-
-        setProcesados(procesadosActuales);
-        setPreparados(preparadosActuales);
-        setSinTelefono(sinTelefonoActuales);
-        setFallidos(fallidosActuales);
-
-        await new Promise((resolve) => setTimeout(resolve, 35));
       }
-
-      setClientesPreparados(clientesSeleccionados);
-      setMensajesIndividuales(mensajesGenerados);
-      setMensajeBaseOriginal(mensajeBase);
-      setClienteRevision(clientesSeleccionados[0] ?? null);
-
-      const responseHistorial = await fetch("/api/whatsapp/historial", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-
-        body: JSON.stringify({
-          campana: propuestaActual,
-          gestor: gestor || null,
-          desde: rango.desde,
-          hasta: rango.hasta,
-          numeroSalida,
-
-          /*
-           * Antes era cantidadSeleccionados.
-           *
-           * Ahora una persona puede generar varios destinatarios
-           * porque puede tener varios celulares.
-           */
-          totalSeleccionados: destinatarios.length,
-
-          totalPreparados: preparadosActuales,
-          totalSinTelefono: sinTelefonoActuales,
-          totalFallidos: fallidosActuales,
-          destinatarios,
-        }),
-      });
-
-      if (!responseHistorial.ok) {
-        throw new Error(
-          "La campaña fue preparada pero no se pudo guardar el historial.",
-        );
-      }
-
-      const dataHistorial = (await responseHistorial.json()) as {
-        ok: boolean;
-        id: number;
-        estado: string;
+      return { destinos, advertencias, error: "" };
+    } catch (e) {
+      return {
+        destinos: [],
+        advertencias,
+        error:
+          e instanceof Error
+            ? e.message
+            : "Revisa los teléfonos seleccionados.",
       };
-
-      console.log("[WhatsApp] Campaña creada:", dataHistorial);
-
-      if (!dataHistorial.id) {
-        throw new Error(
-          "La campaña fue guardada, pero el servidor no devolvió un ID válido.",
-        );
+    }
+  }, [
+    borrador,
+    telefonosSeleccionados,
+    telefonosManuales,
+    mensajesIndividuales,
+    obtenerMetadata,
+  ]);
+  const reiniciarEstadoCampana = useCallback(() => {
+    setCampanaId(null);
+    setVersionSeleccion(null);
+    setPreparando(false);
+    setProcesados(0);
+    setContadores({ preparados: 0, sinTelefono: 0, fallidos: 0 });
+    setBorrador([]);
+    setErrorCampana("");
+    setConfirmaciones(SIN_CONFIRMACIONES_WHATSAPP);
+  }, []);
+  useEffect(() => {
+    if (!enviandoCampana || !campanaId) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    async function actualizar() {
+      try {
+        const r = await fetch("/api/whatsapp/progreso?campanaId=" + campanaId, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!r.ok) throw new Error("No se pudo consultar el progreso.");
+        const data = await r.json();
+        if (controller.signal.aborted) return;
+        setProcesados(Number(data.procesados ?? 0));
+        setContadores({
+          preparados: Number(data.preparados ?? 0),
+          sinTelefono: Number(data.sinTelefono ?? 0),
+          fallidos: Number(data.fallidos ?? 0),
+        });
+        if (["ENVIADA", "ENVIADA_CON_ERRORES", "ERROR"].includes(data.estado))
+          return;
+      } catch {
+        if (controller.signal.aborted) return;
       }
-
-      setCampanaId(dataHistorial.id);
-      setEstadoAbierto(false);
-      setRevisionAbierta(true);
-    } catch (errorPreparando) {
-      console.error("[WhatsApp] Error preparando campaña:", errorPreparando);
-
-      setFallidos((actual) => actual + 1);
-
-      onError?.(
-        errorPreparando instanceof Error
-          ? errorPreparando.message
-          : "Ocurrió un error preparando la campaña.",
-      );
+      timer = setTimeout(() => void actualizar(), 1000);
+    }
+    void actualizar();
+    return () => {
+      controller.abort();
+      if (timer) clearTimeout(timer);
+    };
+  }, [campanaId, enviandoCampana]);
+  const fallo = (e: unknown) => {
+    const mensaje =
+      e instanceof Error ? e.message : "No se pudo completar la operación.";
+    setErrorCampana(mensaje);
+    props.onError?.(mensaje);
+  };
+  async function prepararEnvio() {
+    if (ocupado.current || !props.cantidadSeleccionados || !props.numeroSalida)
+      return;
+    ocupado.current = true;
+    setPreparando(true);
+    setErrorCampana("");
+    setProcesados(0);
+    props.setEstadoAbierto(true);
+    try {
+      if (props.campanaSeguimientoId) {
+        const r = await fetch(
+          "/api/whatsapp/seguimiento?campanaId=" + props.campanaSeguimientoId,
+          { cache: "no-store" },
+        );
+        const data = await r.json();
+        if (!r.ok)
+          throw new Error(
+            data.error ?? "No se pudo comprobar la selección guardada.",
+          );
+        setVersionSeleccion(data.versionSeleccion);
+      }
+      const recuperados = new Map<string, ClienteWhatsapp>();
+      if (props.resolverClientes)
+        for (const c of await props.resolverClientes())
+          recuperados.set(c.id, c);
+      else {
+        const campanas = [
+          ...new Set(
+            props.seleccionados
+              .map((id) => props.obtenerMetadata(id)?.campana)
+              .filter(Boolean),
+          ),
+        ];
+        for (const campana of campanas) {
+          const params = new URLSearchParams({
+            campana: campana!,
+            vista: "todos",
+            desde: props.rango.desde,
+            hasta: props.rango.hasta,
+          });
+          if (props.gestor) params.set("gestor", props.gestor);
+          if (props.campanaSeguimientoId)
+            params.set("campanaId", String(props.campanaSeguimientoId));
+          const r = await fetch("/api/whatsapp/clientes?" + params, {
+            cache: "no-store",
+          });
+          const data = await r.json();
+          if (!r.ok)
+            throw new Error(
+              data.error ?? "No se pudieron validar los clientes.",
+            );
+          for (const c of data.clientes as ClienteWhatsapp[])
+            recuperados.set(c.id, c);
+        }
+      }
+      for (const c of props.clientes)
+        if (!recuperados.has(c.id)) recuperados.set(c.id, c);
+      const elegidos = props.seleccionados
+        .map((id) => recuperados.get(id))
+        .filter((c): c is ClienteWhatsapp => !!c);
+      if (elegidos.length !== props.seleccionados.length)
+        throw new Error(
+          "Algún cliente dejó de estar disponible. Actualiza la selección.",
+        );
+      const mensajes: Record<string, string> = {};
+      let total = 0;
+      for (const c of elegidos) {
+        const telefonos = destinosElegidosWhatsapp(
+          c,
+          props.telefonosSeleccionados[c.id] ?? [],
+          props.telefonosManuales[c.id] ?? [],
+        );
+        total += telefonos.length;
+        const propuesta = props.obtenerMetadata(c.id)?.campana;
+        const plantilla =
+          props.plantillaCliente?.(c) ??
+          (propuesta
+            ? obtenerPlantilla(propuesta as PropuestaId)
+            : props.mensajeBase);
+        mensajes[c.id] =
+          props.mensajesIndividuales[c.id] ??
+          props.generarMensajeCliente(c, plantilla);
+      }
+      if (!total)
+        throw new Error(
+          "Selecciona al menos un teléfono para preparar la campaña.",
+        );
+      setBorrador(elegidos);
+      props.setClientesPreparados(elegidos);
+      props.setMensajesIndividuales(mensajes);
+      props.setMensajeBaseOriginal(props.mensajeBase);
+      props.setClienteRevision(elegidos[0] ?? null);
+      setContadores({ preparados: total, sinTelefono: 0, fallidos: 0 });
+      setProcesados(elegidos.length);
+      setConfirmaciones(SIN_CONFIRMACIONES_WHATSAPP);
+      props.setRevisionAbierta(true);
+    } catch (e) {
+      fallo(e);
     } finally {
+      ocupado.current = false;
+      setPreparando(false);
+      props.setEstadoAbierto(false);
+    }
+  }
+  async function revisarCampanaGuardada() {
+    const id = props.campanaSeguimientoId;
+    if (!id || ocupado.current) return;
+    ocupado.current = true;
+    setPreparando(true);
+    setErrorCampana("");
+    try {
+      const r = await fetch("/api/whatsapp/seguimiento?campanaId=" + id, {
+        cache: "no-store",
+      });
+      const data = await r.json();
+      if (!r.ok)
+        throw new Error(data.error ?? "No se pudo recuperar la selección.");
+      if (!data.destinatarios.length)
+        throw new Error(
+          "Esta campaña no tiene una selección preparada. Elige sus teléfonos pendientes.",
+        );
+      setVersionSeleccion(data.versionSeleccion);
+      const clientes =
+        props.adaptarClientesGuardados?.(data.clientes) ??
+        (data.clientes as ClienteWhatsapp[]);
+      const mensajes: Record<string, string> = {};
+      props.setClientesPreparados(clientes);
+      setBorrador(clientes);
+      for (const c of clientes) {
+        const filas = data.destinatarios.filter(
+          (d: { idc: string }) => d.idc === c.idc,
+        );
+        mensajes[c.id] = filas[0]?.mensaje ?? "";
+      }
+      props.setMensajesIndividuales(mensajes);
+      props.setClienteRevision(clientes[0] ?? null);
+      setConfirmaciones(SIN_CONFIRMACIONES_WHATSAPP);
+      props.setRevisionAbierta(true);
+      return data as {
+        clientes: ClienteWhatsapp[];
+        destinatarios: {
+          idc: string;
+          telefono_destino: string;
+          tipo_telefono: string;
+        }[];
+      };
+    } catch (e) {
+      fallo(e);
+    } finally {
+      ocupado.current = false;
       setPreparando(false);
     }
-  }, [
-    cantidadSeleccionados,
-    numeroSalida,
-    seleccionados,
-    obtenerMetadata,
-    rango.desde,
-    rango.hasta,
-    gestor,
-    clientes,
-    usarTelefonoManual,
-    telefonosManuales,
-    telefonosSeleccionados,
-    mensajeBase,
-    mensajesIndividuales,
-    generarMensajeCliente,
-    propuestaActual,
-    setClientesPreparados,
-    setMensajesIndividuales,
-    setMensajeBaseOriginal,
-    setClienteRevision,
-    setEstadoAbierto,
-    setRevisionAbierta,
-    onError,
-  ]);
-
-  const confirmarCampaña = useCallback(async () => {
-    console.log("[WhatsApp] Confirmar campaña:", {
-      campanaId,
-      enviandoCampana,
-      numeroSalida,
-      cantidadSeleccionados,
-      preparados,
-    });
-
-    if (enviandoCampana || !campanaId) return;
-
-    setEnviandoCampana(true);
-    setEstadoAbierto(true);
-
-    try {
-      console.log("[WhatsApp] Ejecutando POST /api/whatsapp/enviar", {
-        campanaId,
-      });
-
-      const response = await fetch("/api/whatsapp/enviar", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ campanaId }),
-      });
-
-      console.log("[WhatsApp] HTTP:", response.status);
-
-      const data = (await response.json()) as {
-        ok?: boolean;
-        campanaId?: number;
-        estado?: string;
-        total?: number;
-        enviados?: number;
-        fallidos?: number;
-        resultados?: Array<{
-          id: number;
-          idc: string;
-          cliente: string | null;
-          telefonoDestino: string | null;
-          estado: "ENVIADO" | "ERROR";
-          detalle: string;
-          duracionMs: number;
-        }>;
-        error?: string;
-      };
-
-      console.log("[WhatsApp] Respuesta:", data);
-
-      if (!response.ok) {
-        throw new Error(data.error ?? "No se pudo enviar la campaña.");
-      }
-
-      setRevisionAbierta(false);
-      setClienteRevision(null);
-      setClienteVista(null);
-      setEstadoAbierto(false);
-    } catch (errorEnvio) {
-      console.error("[WhatsApp] Error enviando campaña:", errorEnvio);
-
-      setFallidos((actual) => actual + 1);
-
-      onError?.(
-        errorEnvio instanceof Error
-          ? errorEnvio.message
-          : "Ocurrió un error enviando la campaña.",
-      );
-    } finally {
-      setEnviandoCampana(false);
+  }
+  async function confirmarCampaña() {
+    if (ocupado.current) return;
+    if (seleccionActual.error) {
+      fallo(new Error(seleccionActual.error));
+      return;
     }
-  }, [
-    campanaId,
-    enviandoCampana,
-    numeroSalida,
-    cantidadSeleccionados,
-    preparados,
-    setEstadoAbierto,
-    setRevisionAbierta,
-    setClienteRevision,
-    setClienteVista,
-    onError,
-  ]);
-
+    if (!seleccionActual.destinos.length) {
+      fallo(new Error("Selecciona al menos un teléfono antes de confirmar."));
+      return;
+    }
+    const a = seleccionActual.advertencias;
+    if (
+      (a.anteriores && !confirmaciones.confirmarSeguimientos) ||
+      (a.fallidos && !confirmaciones.confirmarReintentos) ||
+      (a.inciertos && !confirmaciones.confirmarResultadosRevisados)
+    ) {
+      fallo(
+        new Error(
+          "Confirma las advertencias de seguimiento antes de continuar.",
+        ),
+      );
+      return;
+    }
+    ocupado.current = true;
+    setEnviandoCampana(true);
+    setErrorCampana("");
+    try {
+      const guardada = await fetch("/api/whatsapp/historial", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          campanaId: props.campanaSeguimientoId ?? campanaId,
+          seleccionExplicita: true,
+          versionSeleccion,
+          campana: props.nombreCampanaGuardada ?? props.propuestaActual,
+          gestor: props.gestor || null,
+          desde: props.rango.desde,
+          hasta: props.rango.hasta,
+          numeroSalida: props.numeroSalida,
+          destinatarios: seleccionActual.destinos,
+          ...confirmaciones,
+        }),
+      });
+      const datos = await guardada.json();
+      if (!guardada.ok)
+        throw new Error(datos.error ?? "No se pudo guardar la selección.");
+      const id = Number(datos.id);
+      if (
+        !Number.isSafeInteger(id) ||
+        id < 1 ||
+        !/^[a-f0-9]{64}$/.test(datos.versionSeleccion ?? "")
+      )
+        throw new Error(
+          "No se pudo confirmar el ID de campaña. Revisa el historial antes de volver a guardar.",
+        );
+      setCampanaId(id);
+      setVersionSeleccion(datos.versionSeleccion);
+      props.onGuardada?.(id);
+      if (props.puedeEnviar !== false) {
+        props.setEstadoAbierto(true);
+        const r = await fetch("/api/whatsapp/enviar", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            campanaId: id,
+            seleccionExplicita: true,
+            versionSeleccion: datos.versionSeleccion,
+            ...confirmaciones,
+          }),
+        });
+        const data = await r.json();
+        if (!r.ok)
+          throw new Error(data.error ?? "No se pudo enviar la campaña.");
+      }
+      props.setRevisionAbierta(false);
+      props.setClienteRevision(null);
+      props.setClienteVista(null);
+      props.onFinalizar?.();
+    } catch (e) {
+      fallo(e);
+    } finally {
+      ocupado.current = false;
+      setEnviandoCampana(false);
+      props.setEstadoAbierto(false);
+    }
+  }
   return {
-    campanaId,
+    campanaId: props.campanaSeguimientoId ?? campanaId,
     enviandoCampana,
     preparando,
     procesados,
-    preparados,
-    sinTelefono,
-    fallidos,
+    preparados:
+      !enviandoCampana && borrador.length
+        ? seleccionActual.destinos.length
+        : contadores.preparados,
+    sinTelefono: contadores.sinTelefono,
+    fallidos: contadores.fallidos,
     prepararEnvio,
     confirmarCampaña,
+    revisarCampanaGuardada,
     reiniciarEstadoCampana,
+    errorCampana,
+    confirmaciones,
+    setConfirmaciones,
+    advertencias: seleccionActual.advertencias,
+    errorSeleccion: seleccionActual.error,
   };
 }

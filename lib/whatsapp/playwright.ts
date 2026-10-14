@@ -36,6 +36,15 @@ export async function obtenerEstadosWhatsapp(numeros?: string[], actor?: ActorWh
 export async function obtenerVinculacionWhatsapp(numero: string, actor?: ActorWhatsapp) {
   return whatsappRemoto() ? operarWhatsappRemoto<local.EstadoSesionWhatsapp & { qr: string | null }>("qr", local.normalizarNumeroWhatsapp(numero), {}, actor) : local.obtenerVinculacionWhatsapp(numero);
 }
+export async function iniciarReservaCampanaWhatsapp(campanaId: number, actor?: ActorWhatsapp) {
+  if (!whatsappRemoto()) return null;
+  const resultado = await operarWhatsappRemoto<{ leaseId: string }>("campana", undefined, { accion: "iniciar", campanaId }, actor);
+  return resultado.leaseId;
+}
+export async function finalizarReservaCampanaWhatsapp(campanaId: number, leaseId: string, actor?: ActorWhatsapp) {
+  if (whatsappRemoto()) return operarWhatsappRemoto<{ ok: boolean; liberada: boolean }>("campana", undefined, { accion: "finalizar", campanaId, leaseId }, actor);
+  return { ok: true, liberada: false };
+}
 export async function cerrarYEliminarWhatsappTemporal(numero: string, actor?: ActorWhatsapp) {
   if (whatsappRemoto()) await operarWhatsappRemoto("cerrarTemporal", local.normalizarNumeroWhatsapp(numero), {}, actor);
   else await local.cerrarYEliminarWhatsappTemporal(numero);

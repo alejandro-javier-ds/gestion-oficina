@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ChevronDown, ChevronUp, Pencil, Trash2 } from "lucide-react";
 import ModalEditarGestion, { GestionParaEditar } from "./ModalEditarGestion";
+import { formatearFechaHoraLima } from "@/lib/fecha-lima";
 
 type Gestion = {
   id: number;
@@ -52,8 +53,7 @@ const OPCIONES_CATEGORIA = [
 ];
 
 function formatearFecha(iso: string): string {
-  const fecha = new Date(iso);
-  return fecha.toLocaleString("es-PE", {
+  return formatearFechaHoraLima(iso, {
     day: "2-digit",
     month: "short",
     year: "numeric",

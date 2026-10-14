@@ -146,11 +146,26 @@ export async function proxy(request: NextRequest) {
       pathname.startsWith("/admin/usuarios") ||
       pathname.startsWith("/api/admin/usuarios");
 
+    const esRutaImportacionPortafolio =
+      pathname === "/admin/portafolio" ||
+      pathname.startsWith("/admin/portafolio/") ||
+      pathname === "/api/admin/importar" ||
+      pathname.startsWith("/api/admin/portafolio/");
+
     if (esRutaUsuarios && rol !== "administrador") {
       if (peticionApi) {
         return respuestaApiSinPermiso();
       }
 
+      return NextResponse.redirect(new URL("/admin", request.url));
+    }
+
+    if (
+      esRutaImportacionPortafolio &&
+      rol !== "administrador" &&
+      rol !== "supervisor"
+    ) {
+      if (peticionApi) return respuestaApiSinPermiso();
       return NextResponse.redirect(new URL("/admin", request.url));
     }
 

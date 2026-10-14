@@ -11,7 +11,9 @@ import ExcelJS from "exceljs";
 
 import { consultarFilas, ejecutar } from "@/lib/postgres";
 
-import { leerSesionActual } from "@/lib/auth";
+import { requerirAccesoApi } from "@/lib/api-acceso";
+import { columnaFechaLimaSql, fechaActualLima } from "@/lib/fecha-lima";
+import { valorMonetarioExcel } from "@/lib/exportacion-monetaria";
 
 export const runtime = "nodejs";
 
@@ -25,10 +27,10 @@ type FilaDetalleCruda = {
   segmentacion: string | null;
   categoria: string | null;
   codigo_razon: string | null;
-  monto_pagado: number | null;
+  monto_pagado: string | null;
   moneda_monto_pagado: string | null;
   observacion: string | null;
-  mtodeuda_sol: number | null;
+  mtodeuda_sol: string | null;
   diasmora: number | null;
   rango_mora: string | null;
   descproducto: string | null;
@@ -49,7 +51,7 @@ type FilaDetalleCruda = {
   analista_procesal: string | null;
   fec_entrega_legajo_a_estudio: string | null;
   n_garantias: number;
-  valor_garantias: number;
+  valor_garantias: string;
   promesas_vigentes: number;
   promesas_cumplidas: number;
   promesas_rotas: number;
@@ -62,6 +64,8 @@ type FilaResumenRaw = {
   funcionario: string | null;
   gestionesRealizadas: number;
   clientesDistintosConTat: number;
+  gestionesCarteraActual: number;
+  clientesDistintosConTatCarteraActual: number;
   promesasCreadas: number;
   promesasCumplidas: number;
   citasAgendadas: number;
@@ -75,9 +79,9 @@ type FilaPromesaCruda = {
   codcuentacobranza: string;
   tipo: string;
   moneda: string;
-  monto_deuda_total: number | null;
-  monto_prometido: number | null;
-  monto_dolares: number | null;
+  monto_deuda_total: string | null;
+  monto_prometido: string | null;
+  monto_dolares: string | null;
   modalidad_pago: string | null;
   tipo_negociacion: string | null;
   beneficio: string | null;
@@ -105,6 +109,12 @@ const COLOR_FILA_PAR = "FFF0FDFA";
 const COLOR_FILA_IMPAR = "FFFFFFFF";
 
 const COLOR_BORDE = "FFD1D5DB";
+
+const ROLES_EXPORTACION = ["administrador", "supervisor", "abogado"] as const;
+
+const FECHA_GESTION_LIMA = columnaFechaLimaSql("g.fecha_hora");
+const FECHA_PROMESA_LIMA = columnaFechaLimaSql("pp.fecha_hora");
+const FECHA_CITA_LIMA = columnaFechaLimaSql("ci.fecha_hora");
 
 const JOIN_CUENTA_REPRESENTATIVA = `
   JOIN cuentas c
@@ -139,7 +149,7 @@ const SUBCONSULTAS_RESUMEN = `
     FROM garantias ga
     WHERE ga.idc = g.idc
       AND ga.activo = 1
-  ) AS valor_garantias,
+  )::text AS valor_garantias,
 
   (
     SELECT COUNT(*)::int
@@ -311,19 +321,36 @@ function construirHoja(
 }
 
 export async function GET(request: NextRequest) {
-  const sesion = await leerSesionActual();
+  const acceso = await requerirAccesoApi(ROLES_EXPORTACION);
+  if (!acceso.ok) return acceso.respuesta;
+  const sesion = acceso.sesion;
 
-  const desde = request.nextUrl.searchParams.get("desde");
+  const desde = request.nextUrl.searchParams.get("desde")?.trim() ?? "";
 
-  const hasta = request.nextUrl.searchParams.get("hasta");
+  const hasta = request.nextUrl.searchParams.get("hasta")?.trim() ?? "";
+
+  const fechaValida = (valor: string) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(valor)) return false;
+    const fecha = new Date(`${valor}T00:00:00.000Z`);
+    return !Number.isNaN(fecha.getTime()) && fecha.toISOString().slice(0, 10) === valor;
+  };
+
+  if ((desde && !fechaValida(desde)) || (hasta && !fechaValida(hasta))) {
+    return NextResponse.json({ error: "El rango de fechas no es válido." }, { status: 400 });
+  }
+
+  if (Boolean(desde) !== Boolean(hasta)) {
+    return NextResponse.json({ error: "Indica las dos fechas o deja ambas vacías." }, { status: 400 });
+  }
+
+  if (desde && hasta && desde > hasta) {
+    return NextResponse.json({ error: "La fecha desde no puede ser posterior a la fecha hasta." }, { status: 400 });
+  }
 
   const condicionFecha =
     desde && hasta
       ? `
-        AND LEFT(
-          g.fecha_hora::text,
-          10
-        ) BETWEEN $1 AND $2
+        AND ${FECHA_GESTION_LIMA} BETWEEN $1::date AND $2::date
       `
       : "";
 
@@ -332,10 +359,7 @@ export async function GET(request: NextRequest) {
   const condicionFechaPromesa =
     desde && hasta
       ? `
-        AND LEFT(
-          pp.fecha_hora::text,
-          10
-        ) BETWEEN $1 AND $2
+        AND ${FECHA_PROMESA_LIMA} BETWEEN $1::date AND $2::date
       `
       : "";
 
@@ -353,10 +377,10 @@ export async function GET(request: NextRequest) {
         g.segmentacion,
         g.categoria,
         g.codigo_razon,
-        g.monto_pagado,
+        g.monto_pagado::text AS monto_pagado,
         g.moneda_monto_pagado,
         g.observacion,
-        c.mtodeuda_sol,
+        c.mtodeuda_sol::text AS mtodeuda_sol,
         c.diasmora,
         c.rango_mora,
         c.descproducto,
@@ -399,8 +423,10 @@ export async function GET(request: NextRequest) {
 
   const detalle = detalleCrudo.map((d) => ({
     ...d,
-
     fecha_hora: formatearFechaHoraLima(d.fecha_hora),
+    monto_pagado: valorMonetarioExcel(d.monto_pagado),
+    mtodeuda_sol: valorMonetarioExcel(d.mtodeuda_sol),
+    valor_garantias: valorMonetarioExcel(d.valor_garantias),
   }));
 
   const carteraPorGestor = await consultarFilas<FilaCarteraPorGestor>(
@@ -414,6 +440,7 @@ export async function GET(request: NextRequest) {
       FROM cuentas
 
       WHERE activo = 1
+        AND UPPER(TRIM(estado_cartera)) IN ('ACTIVA', 'CASTIGO')
         AND gestor IS NOT NULL
 
       GROUP BY
@@ -429,10 +456,7 @@ export async function GET(request: NextRequest) {
     `
       WITH gestiones_base AS (
         SELECT
-          LEFT(
-            g.fecha_hora::text,
-            10
-          ) AS dia,
+          ${FECHA_GESTION_LIMA} AS dia,
 
           c.gestor
             AS gestor,
@@ -441,7 +465,16 @@ export async function GET(request: NextRequest) {
             AS funcionario,
 
           g.idc,
-          g.categoria
+          g.categoria,
+
+          EXISTS (
+            SELECT 1
+            FROM cuentas ca
+            WHERE ca.idc = g.idc
+              AND ca.gestor = c.gestor
+              AND ca.activo = 1
+              AND UPPER(TRIM(ca.estado_cartera)) IN ('ACTIVA', 'CASTIGO')
+          ) AS en_cartera_actual
 
         FROM gestiones g
 
@@ -452,7 +485,6 @@ export async function GET(request: NextRequest) {
           OR
           g.categoria <> 'PDP'
         )
-
         ${condicionFecha}
       ),
 
@@ -471,7 +503,21 @@ export async function GET(request: NextRequest) {
               THEN idc
             END
           )::int
-            AS "clientesDistintosConTat"
+            AS "clientesDistintosConTat",
+
+          COUNT(*) FILTER (
+            WHERE en_cartera_actual
+          )::int
+            AS "gestionesCarteraActual",
+
+          COUNT(
+            DISTINCT CASE
+              WHEN categoria = 'TAT'
+                AND en_cartera_actual
+              THEN idc
+            END
+          )::int
+            AS "clientesDistintosConTatCarteraActual"
 
         FROM gestiones_base
 
@@ -483,10 +529,7 @@ export async function GET(request: NextRequest) {
 
       promesas_dia AS (
         SELECT
-          LEFT(
-            pp.fecha_hora::text,
-            10
-          ) AS dia,
+          ${FECHA_PROMESA_LIMA} AS dia,
 
           cp.gestor
             AS gestor,
@@ -505,19 +548,13 @@ export async function GET(request: NextRequest) {
           ON cp.codcuentacobranza = pp.codcuentacobranza
 
         GROUP BY
-          LEFT(
-            pp.fecha_hora::text,
-            10
-          ),
+          ${FECHA_PROMESA_LIMA},
           cp.gestor
       ),
 
       citas_dia AS (
         SELECT
-          LEFT(
-            ci.fecha_hora::text,
-            10
-          ) AS dia,
+          ${FECHA_CITA_LIMA} AS dia,
 
           cc.gestor
             AS gestor,
@@ -541,10 +578,7 @@ export async function GET(request: NextRequest) {
           )
 
         GROUP BY
-          LEFT(
-            ci.fecha_hora::text,
-            10
-          ),
+          ${FECHA_CITA_LIMA},
           cc.gestor
       )
 
@@ -556,6 +590,10 @@ export async function GET(request: NextRequest) {
         rg."gestionesRealizadas",
 
         rg."clientesDistintosConTat",
+
+        rg."gestionesCarteraActual",
+
+        rg."clientesDistintosConTatCarteraActual",
 
         COALESCE(
           pd.promesas_creadas,
@@ -608,9 +646,9 @@ export async function GET(request: NextRequest) {
         pp.codcuentacobranza,
         pp.tipo,
         pp.moneda,
-        pp.monto_deuda_total,
-        pp.monto_prometido,
-        pp.monto_dolares,
+        pp.monto_deuda_total::text AS monto_deuda_total,
+        pp.monto_prometido::text AS monto_prometido,
+        pp.monto_dolares::text AS monto_dolares,
         pp.modalidad_pago,
         pp.tipo_negociacion,
         pp.beneficio,
@@ -638,13 +676,14 @@ export async function GET(request: NextRequest) {
     parametrosFechaPromesa,
   );
 
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = fechaActualLima();
 
   const promesasConVencida = promesasCrudas.map((p) => ({
     ...p,
-
     fecha_hora: formatearFechaHoraLima(p.fecha_hora),
-
+    monto_deuda_total: valorMonetarioExcel(p.monto_deuda_total),
+    monto_prometido: valorMonetarioExcel(p.monto_prometido),
+    monto_dolares: valorMonetarioExcel(p.monto_dolares),
     vencida: p.estado === "vigente" && p.fecha_promesa < hoy ? "Sí" : "No",
   }));
 
@@ -930,13 +969,16 @@ export async function GET(request: NextRequest) {
 
         intensidadDiaria:
           totalCartera > 0
-            ? Number((f.gestionesRealizadas / totalCartera).toFixed(3))
+            ? Number((f.gestionesCarteraActual / totalCartera).toFixed(3))
             : 0,
 
         contactabilidadDiaria:
           totalCartera > 0
             ? Number(
-              ((f.clientesDistintosConTat / totalCartera) * 100).toFixed(1),
+              (
+                (f.clientesDistintosConTatCarteraActual / totalCartera) *
+                100
+              ).toFixed(1),
             )
             : 0,
 
@@ -1077,12 +1119,9 @@ export async function GET(request: NextRequest) {
 
   const buffer = Buffer.from(await libro.xlsx.writeBuffer());
 
-  const nombreArchivo = `gestiones_${new Date()
-    .toISOString()
-    .slice(0, 10)}.xlsx`;
+  const nombreArchivo = `gestiones_${hoy}.xlsx`;
 
-  if (sesion) {
-    await ejecutar(
+  await ejecutar(
       `
         INSERT INTO exportaciones (
           fecha_hora,
@@ -1095,7 +1134,6 @@ export async function GET(request: NextRequest) {
       `,
       [new Date().toISOString(), sesion.nombreCompleto],
     );
-  }
 
   return new NextResponse(buffer, {
     headers: {
@@ -1103,6 +1141,7 @@ export async function GET(request: NextRequest) {
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 
       "Content-Disposition": `attachment; filename="${nombreArchivo}"`,
+      "Cache-Control": "private, no-store, max-age=0",
     },
   });
 }

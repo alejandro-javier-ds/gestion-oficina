@@ -1,0 +1,26 @@
+[Unit]
+Description=Respaldo cifrado de sesiones WhatsApp en Azure Blob
+After=whatsapp-worker.service network-online.target
+RequiresMountsFor=/srv/whatsapp-data
+Wants=network-online.target
+ConditionPathExists=/etc/whatsapp-worker/worker.env
+
+[Service]
+Type=oneshot
+User=root
+Group=988
+UMask=0077
+RuntimeDirectory=whatsapp-worker-backup
+RuntimeDirectoryMode=0700
+StateDirectory=whatsapp-worker-backup
+StateDirectoryMode=0700
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/srv/whatsapp-data/profile-backups /run/whatsapp-worker /run/lock /var/lib/whatsapp-worker-backup
+ExecStart=/usr/bin/python3 /opt/whatsapp-worker/backup-coordinator.py
+TimeoutStartSec=infinity
+TimeoutStopSec=300
+KillMode=mixed

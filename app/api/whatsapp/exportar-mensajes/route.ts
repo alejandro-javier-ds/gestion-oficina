@@ -13,11 +13,12 @@ import ExcelJS from "exceljs";
 
 import { consultarFilas } from "@/lib/postgres";
 
-import { leerSesionActual } from "@/lib/auth";
+import { requerirAccesoApi } from "@/lib/api-acceso";
+import { fechaActualLima } from "@/lib/fecha-lima";
 
 export const runtime = "nodejs";
 
-const ROLES_PERMITIDOS = ["administrador", "supervisor", "abogado", "gestor"];
+const ROLES_PERMITIDOS = ["administrador", "supervisor", "abogado", "gestor"] as const;
 
 const COLOR_ENCABEZADO = "FF0F766E";
 
@@ -221,29 +222,9 @@ function construirHoja(
 }
 
 export async function GET(request: NextRequest) {
-  const sesion = await leerSesionActual();
-
-  if (!sesion) {
-    return NextResponse.json(
-      {
-        error: "No autenticado.",
-      },
-      {
-        status: 401,
-      },
-    );
-  }
-
-  if (!ROLES_PERMITIDOS.includes(sesion.rol)) {
-    return NextResponse.json(
-      {
-        error: "No tienes permiso para exportar mensajes WhatsApp.",
-      },
-      {
-        status: 403,
-      },
-    );
-  }
+  const acceso = await requerirAccesoApi(ROLES_PERMITIDOS);
+  if (!acceso.ok) return acceso.respuesta;
+  const sesion = acceso.sesion;
 
   const params = request.nextUrl.searchParams;
 
@@ -281,6 +262,13 @@ export async function GET(request: NextRequest) {
 
   const gestorFiltro =
     sesion.rol === "gestor" ? (sesion.gestor?.trim() ?? "") : gestor;
+
+  if (sesion.rol === "gestor" && !gestorFiltro) {
+    return NextResponse.json(
+      { error: "No tienes una cartera asignada para consultar campañas." },
+      { status: 403, headers: { "Cache-Control": "private, no-store, max-age=0" } },
+    );
+  }
 
   const condiciones: string[] = [];
 
@@ -706,7 +694,7 @@ export async function GET(request: NextRequest) {
 
     const archivo = new Uint8Array(buffer);
 
-    const fecha = new Date().toISOString().slice(0, 10);
+    const fecha = fechaActualLima();
 
     const nombre = `exportar_mensajes_whatsapp_${fecha}.xlsx`;
 
@@ -720,6 +708,7 @@ export async function GET(request: NextRequest) {
         "Content-Disposition": `attachment; filename="${nombre}"`,
 
         "Content-Length": String(archivo.byteLength),
+        "Cache-Control": "private, no-store, max-age=0",
       },
     });
   } catch (error) {

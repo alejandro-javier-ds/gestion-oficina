@@ -14,6 +14,7 @@ import SelectorRangoFecha, {
   rangoInicial,
   type RangoFecha,
 } from "./SelectorRangoFecha";
+import { formatearFechaCalendarioLima } from "@/lib/fecha-lima";
 
 type DatosIndicadores = {
   metaIntensidad: number;
@@ -77,8 +78,7 @@ const MEDIDAS = [
 ];
 
 function formatearFechaCorta(iso: string): string {
-  const [, mes, dia] = iso.split("-");
-  return `${dia}/${mes}`;
+  return formatearFechaCalendarioLima(iso, { day: "2-digit", month: "2-digit" });
 }
 
 export default function SeccionIndicadores() {
@@ -90,6 +90,7 @@ export default function SeccionIndicadores() {
     setCargando(true);
     fetch(
       `/api/dashboard/indicadores?desde=${rango.desde}&hasta=${rango.hasta}`,
+      { cache: "no-store" },
     )
       .then((res) => res.json())
       .then(setDatos)

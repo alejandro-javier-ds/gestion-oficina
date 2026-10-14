@@ -1,6 +1,6 @@
 import type { WebSocket } from "ws";
 import type { KeyObject, X509Certificate } from "node:crypto";
-export type ActorWhatsapp = { userId: number; rol: string; debeCambiarContrasena: boolean };
+export type ActorWhatsapp = { userId: number; rol: string; debeCambiarContrasena: boolean; campanaLeaseId?: string };
 export type OperacionWhatsapp = { op: string; numero?: string; payload: Record<string, unknown> };
 export class ErrorRemotoWhatsapp extends Error { codigo: string; status: number; constructor(codigo: string, mensaje: string, status?: number); }
 export const UUID: RegExp;

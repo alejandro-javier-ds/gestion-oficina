@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { consultarFilas } from "@/lib/postgres";
+import { columnaFechaLimaSql, fechaActualLima } from "@/lib/fecha-lima";
 
 export const runtime = "nodejs";
 
@@ -22,7 +23,8 @@ export async function GET(request: NextRequest) {
 
   const gestorFiltro = request.nextUrl.searchParams.get("gestor");
 
-  const fechaObjetivo = fecha ?? new Date().toISOString().slice(0, 10);
+  const fechaObjetivo = fecha ?? fechaActualLima();
+  const fechaGestionLima = columnaFechaLimaSql("g.fecha_hora");
 
   let filas: FilaResumen[];
 
@@ -30,8 +32,7 @@ export async function GET(request: NextRequest) {
     filas = await consultarFilas<FilaResumen>(
       `
           SELECT
-            g.usuario_gestor_oficina
-              AS gestor,
+            c.gestor AS gestor,
 
             c.funcionario
               AS funcionario,
@@ -59,34 +60,30 @@ export async function GET(request: NextRequest) {
             ON c.codcuentacobranza =
               COALESCE(
                 g.codcuentacobranza,
-
                 (
-                  SELECT
-                    cc.codcuentacobranza
+                  SELECT cc.codcuentacobranza
                   FROM cuentas cc
                   WHERE cc.idc = g.idc
                     AND cc.activo = 1
-                  ORDER BY
-                    cc.mtodeuda_sol DESC
+                  ORDER BY cc.mtodeuda_sol DESC
                   LIMIT 1
                 )
               )
 
-          WHERE g.fecha_hora LIKE $1
-            AND g.usuario_gestor_oficina = $2
+          WHERE ${fechaGestionLima} = $1::date
+            AND c.gestor = $2
 
           GROUP BY
-            g.usuario_gestor_oficina,
+            c.gestor,
             c.funcionario
         `,
-      [`${fechaObjetivo}%`, gestorFiltro],
+      [fechaObjetivo, gestorFiltro],
     );
   } else {
     filas = await consultarFilas<FilaResumen>(
       `
           SELECT
-            g.usuario_gestor_oficina
-              AS gestor,
+            c.gestor AS gestor,
 
             c.funcionario
               AS funcionario,
@@ -114,26 +111,23 @@ export async function GET(request: NextRequest) {
             ON c.codcuentacobranza =
               COALESCE(
                 g.codcuentacobranza,
-
                 (
-                  SELECT
-                    cc.codcuentacobranza
+                  SELECT cc.codcuentacobranza
                   FROM cuentas cc
                   WHERE cc.idc = g.idc
                     AND cc.activo = 1
-                  ORDER BY
-                    cc.mtodeuda_sol DESC
+                  ORDER BY cc.mtodeuda_sol DESC
                   LIMIT 1
                 )
               )
 
-          WHERE g.fecha_hora LIKE $1
+          WHERE ${fechaGestionLima} = $1::date
 
           GROUP BY
-            g.usuario_gestor_oficina,
+            c.gestor,
             c.funcionario
         `,
-      [`${fechaObjetivo}%`],
+      [fechaObjetivo],
     );
   }
 

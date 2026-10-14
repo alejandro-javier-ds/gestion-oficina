@@ -12,6 +12,7 @@ import {
   ResponsiveContainer,
   CartesianGrid,
 } from "recharts";
+import { formatearFechaCalendarioLima } from "@/lib/fecha-lima";
 
 type FilaDia = {
   fecha: string;
@@ -19,8 +20,7 @@ type FilaDia = {
 };
 
 function formatearFechaCorta(iso: string): string {
-  const [, mes, dia] = iso.split("-");
-  return `${dia}/${mes}`;
+  return formatearFechaCalendarioLima(iso, { day: "2-digit", month: "2-digit" });
 }
 
 export default function LineaTendenciaDiaria({ datos }: { datos: FilaDia[] }) {

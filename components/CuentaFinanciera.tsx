@@ -9,6 +9,7 @@ import { Landmark, Send } from "lucide-react";
 import ModalPromesaPago from "./ModalPromesaPago";
 import { Cuenta } from "@/lib/types";
 import { puedeModificarPromesas } from "@/lib/promesas";
+import { formatearFechaCalendarioLima } from "@/lib/fecha-lima";
 
 type Promesa = {
   id: number;
@@ -38,9 +39,7 @@ function formatearMoneda(valor: number | null, moneda?: string): string {
 }
 
 function formatearFecha(iso: string): string {
-  const fecha = new Date(iso);
-  if (isNaN(fecha.getTime())) return iso;
-  return fecha.toLocaleDateString("es-PE", {
+  return formatearFechaCalendarioLima(iso, {
     day: "2-digit",
     month: "short",
     year: "numeric",

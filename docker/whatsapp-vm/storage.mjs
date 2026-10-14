@@ -9,7 +9,7 @@ export function comprobarMontaje(mountinfo, root) {
   for (const campos of montajes) if (campos[4]?.startsWith(root + "/")) throw new Error("No se admiten otros montajes dentro del disco de WhatsApp.");
 }
 
-export async function validarDisco(root = "/data", uuid = process.env.WHATSAPP_DATA_UUID) {
+export async function validarDisco(root = "/data", uuid = process.env.WHATSAPP_DATA_UUID, opciones = {}) {
   if (process.platform !== "linux" || !uuid || !/^[a-f0-9-]{8,64}$/i.test(uuid)) throw new Error("Falta el UUID verificado del disco de WhatsApp.");
   if (!(await fs.lstat(root)).isDirectory() || await fs.realpath(root) !== root) throw new Error("El disco de WhatsApp no puede ser un enlace.");
   comprobarMontaje(await fs.readFile("/proc/self/mountinfo", "utf8"), root);
@@ -22,11 +22,12 @@ export async function validarDisco(root = "/data", uuid = process.env.WHATSAPP_D
     const carpeta = path.join(root, directorio);
     const entrada = await fs.lstat(carpeta);
     if (!entrada.isDirectory() || await fs.realpath(carpeta) !== carpeta || (await fs.statfs(carpeta)).type !== 0xef53) throw new Error("La carpeta de perfiles debe estar en el disco ext4.");
-    await fs.access(carpeta, fs.constants.R_OK | fs.constants.W_OK | fs.constants.X_OK);
+    await fs.access(carpeta, fs.constants.R_OK | fs.constants.X_OK | (opciones.soloLectura ? 0 : fs.constants.W_OK));
   }
 }
 
 export async function sincronizarDirectorio(carpeta) {
+  if (process.platform === "win32" && process.env.NODE_ENV === "test") return;
   const archivo = await fs.open(carpeta, "r");
   try { await archivo.sync(); } finally { await archivo.close(); }
 }
@@ -40,7 +41,7 @@ export async function escribirAtomico(archivo, datos) {
   finally { await fs.unlink(temporal).catch(() => {}); }
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname && process.argv[2] === "check") {
-  try { await validarDisco(); }
+if (process.argv[1] === new URL(import.meta.url).pathname && ["check", "check-readonly"].includes(process.argv[2])) {
+  try { await validarDisco("/data", process.env.WHATSAPP_DATA_UUID, { soloLectura: process.argv[2] === "check-readonly" }); }
   catch { console.error("No se inicia WhatsApp: disco ext4, UUID o permisos inválidos."); process.exitCode = 1; }
 }

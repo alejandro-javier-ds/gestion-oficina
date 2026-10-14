@@ -6,6 +6,9 @@
 import { NextResponse } from "next/server";
 
 import { consultarUno } from "@/lib/postgres";
+import { requerirAccesoApi } from "@/lib/api-acceso";
+
+const ROLES_EXPORTACION = ["administrador", "supervisor", "abogado"] as const;
 
 export const runtime = "nodejs";
 
@@ -15,6 +18,8 @@ type UltimaExportacion = {
 };
 
 export async function GET() {
+  const acceso = await requerirAccesoApi(ROLES_EXPORTACION);
+  if (!acceso.ok) return acceso.respuesta;
   const ultima = await consultarUno<UltimaExportacion>(
     `
         SELECT

@@ -10,13 +10,9 @@
 !.yarn/releases
 !.yarn/versions
 
-# testing — los tests se conservan solo en local
+# Pruebas locales.
 /coverage
-tests/
-test/
-__tests__/
-__mocks__/
-*.test.*
+**/*[Tt][Ee][Ss][Tt]*
 *.spec.*
 *.e2e-spec.*
 playwright-report/
@@ -63,6 +59,8 @@ logs/
 
 # temporales y copias locales
 .cache/
+__pycache__/
+*.py[cod]
 *.tmp
 *.temp
 *.bak

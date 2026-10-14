@@ -20,18 +20,20 @@ with tarfile.open(archive, "r:") as source:
             raise ValueError("Invalid entry")
         names.add(str(name))
         member.mode = 0o700 if member.isdir() else 0o600
-        member.uid, member.gid = os.getuid(), os.getgid()
+        member.uid = os.getuid() if hasattr(os, "getuid") else 0
+        member.gid = os.getgid() if hasattr(os, "getgid") else 0
         member.uname = member.gname = ""
         member.pax_headers = {}
         members.append(member)
     for member in members:
         source.extract(member, destination, set_attrs=True)
         if member.isfile():
-            with open(os.path.join(destination, member.name), "rb") as saved:
+            with open(os.path.join(destination, member.name), "rb+") as saved:
                 os.fsync(saved.fileno())
-    for root, _, _ in os.walk(destination, topdown=False):
-        descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
+    if os.name != "nt":
+        for root, _, _ in os.walk(destination, topdown=False):
+            descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)

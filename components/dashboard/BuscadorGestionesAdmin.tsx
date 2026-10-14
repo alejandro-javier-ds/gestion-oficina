@@ -8,6 +8,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Search, Pencil, Trash2 } from "lucide-react";
 import { useSesion } from "@/components/SesionProvider";
 import ModalEditarGestion, { GestionParaEditar } from "../ModalEditarGestion";
+import { formatearFechaHoraLima } from "@/lib/fecha-lima";
 
 type Resultado = {
   id: number;
@@ -31,8 +32,7 @@ const CHIP_POR_CATEGORIA: Record<string, string> = {
 };
 
 function formatearFecha(iso: string): string {
-  const fecha = new Date(iso);
-  return fecha.toLocaleString("es-PE", {
+  return formatearFechaHoraLima(iso, {
     day: "2-digit",
     month: "short",
     year: "numeric",

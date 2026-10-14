@@ -1,11 +1,9 @@
-// components/whatsapp/TablaClientesPdpWhatsapp.tsx
-// Tabla PDP con el mismo flujo visual de Gestiones.
-// Solo muestra celulares peruanos válidos como destinos de WhatsApp.
-
 "use client";
-
-import { Check, ChevronDown, Eye, Phone } from "lucide-react";
-
+import { Eye } from "lucide-react";
+import type { SeguimientoCliente } from "@/lib/whatsapp/seguimiento";
+import SeleccionTelefonosWhatsapp from "./SeleccionTelefonosWhatsapp";
+import SeguimientoClienteWhatsapp from "./SeguimientoClienteWhatsapp";
+import { formatearFechaCalendarioLima } from "@/lib/fecha-lima";
 export type TelefonoPdp = {
   id_phone: number;
   phone: string;
@@ -39,118 +37,24 @@ export type ClientePdp = {
   telefonos: TelefonoPdp[];
 
   telefonoPredeterminado: string;
+  seguimiento?: SeguimientoCliente;
 };
 
 type Props = {
   clientes: ClientePdp[];
-
   seleccionados: string[];
-
   cargando: boolean;
-
   error: string;
-
-  telefonosSeleccionados: Record<string, string>;
-
-  telefonosManuales: Record<string, string>;
-
-  usarTelefonoManual: Record<string, boolean>;
-
+  telefonosSeleccionados: Record<string, string[]>;
+  telefonosManuales: Record<string, string[]>;
   onToggle: (id: string) => void;
-
-  onTelefono: (id: string, telefonoId: string) => void;
-
-  onTelefonoManual: (id: string, valor: string) => void;
-
-  onUsarManual: (id: string) => void;
-
-  onVolverRegistrado: (id: string) => void;
-
+  onTelefono: (id: string, numero: string) => void;
+  onSeleccionarTelefonos: (id: string, numeros: string[]) => void;
+  onAgregarManual: (id: string, numero: string) => void;
   onVistaPrevia: (cliente: ClientePdp) => void;
+  soloSinExito?: boolean;
+  disabled?: boolean;
 };
-
-function formatearMonto(cliente: ClientePdp): string {
-  if (cliente.montoPdp === null || cliente.montoPdp === undefined) {
-    return "—";
-  }
-
-  const moneda = cliente.moneda?.trim().toUpperCase();
-
-  const simbolo = moneda === "USD" ? "$" : "S/";
-
-  return `${simbolo} ${cliente.montoPdp.toLocaleString("es-PE", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
-}
-
-function normalizarTelefonoRegistrado(valor: string): string {
-  return String(valor ?? "")
-    .replace(/\D/g, "")
-    .replace(/^51/, "");
-}
-
-function normalizarTelefonoManual(valor: string): string {
-  return normalizarTelefonoRegistrado(valor).slice(0, 9);
-}
-
-function esCelularWhatsappValido(telefono: TelefonoPdp): boolean {
-  if (telefono.activo !== 1) {
-    return false;
-  }
-
-  if (telefono.tipo_telefono.trim().toLowerCase() !== "celular") {
-    return false;
-  }
-
-  const numero = normalizarTelefonoRegistrado(telefono.phone);
-
-  return /^9\d{8}$/.test(numero);
-}
-
-function obtenerCelularesWhatsapp(cliente: ClientePdp): TelefonoPdp[] {
-  const numerosUnicos = new Map<string, TelefonoPdp>();
-
-  for (const telefono of cliente.telefonos) {
-    if (!esCelularWhatsappValido(telefono)) {
-      continue;
-    }
-
-    const numeroNormalizado = normalizarTelefonoRegistrado(telefono.phone);
-
-    if (!numerosUnicos.has(numeroNormalizado)) {
-      numerosUnicos.set(numeroNormalizado, {
-        ...telefono,
-        phone: numeroNormalizado,
-      });
-    }
-  }
-
-  const celulares = Array.from(numerosUnicos.values());
-
-  const predeterminado = normalizarTelefonoRegistrado(
-    cliente.telefonoPredeterminado,
-  );
-
-  if (!/^9\d{8}$/.test(predeterminado)) {
-    return celulares;
-  }
-
-  return [...celulares].sort((a, b) => {
-    const aEsPredeterminado =
-      normalizarTelefonoRegistrado(a.phone) === predeterminado;
-
-    const bEsPredeterminado =
-      normalizarTelefonoRegistrado(b.phone) === predeterminado;
-
-    if (aEsPredeterminado === bEsPredeterminado) {
-      return 0;
-    }
-
-    return aEsPredeterminado ? -1 : 1;
-  });
-}
-
 export default function TablaClientesPdpWhatsapp({
   clientes,
   seleccionados,
@@ -158,328 +62,110 @@ export default function TablaClientesPdpWhatsapp({
   error,
   telefonosSeleccionados,
   telefonosManuales,
-  usarTelefonoManual,
   onToggle,
   onTelefono,
-  onTelefonoManual,
-  onUsarManual,
-  onVolverRegistrado,
+  onSeleccionarTelefonos,
+  onAgregarManual,
   onVistaPrevia,
+  soloSinExito,
+  disabled,
 }: Props) {
-  if (cargando) {
+  if (cargando) return <div className="p-6">Cargando clientes PDP...</div>;
+  if (error)
     return (
-      <section className="tarjeta overflow-hidden">
-        <div className="p-8 text-center text-sm">Cargando clientes PDP...</div>
-      </section>
+      <p role="alert" className="p-6">
+        {error}
+      </p>
     );
-  }
-
-  if (error) {
-    return (
-      <section className="tarjeta overflow-hidden">
-        <div
-          className="p-8 text-center text-sm"
-          style={{
-            color: "var(--color-alerta)",
-          }}
-        >
-          {error}
-        </div>
-      </section>
-    );
-  }
-
-  if (clientes.length === 0) {
-    return (
-      <section className="tarjeta overflow-hidden">
-        <div className="p-8 text-center">
-          <p className="text-sm font-medium">
-            No hay clientes para esta campaña.
-          </p>
-
-          <p
-            className="mt-1 text-xs"
-            style={{
-              color: "var(--color-texto-suave)",
-            }}
-          >
-            No existen PDPs con este Status PDP.
-          </p>
-        </div>
-      </section>
-    );
-  }
-
+  if (!clientes.length)
+    return <p className="p-6">No hay clientes para estos filtros.</p>;
   return (
-    <section className="tarjeta overflow-hidden">
-      <div
-        className="flex items-center justify-between border-b p-4 sm:p-5"
-        style={{
-          borderColor: "var(--color-borde)",
-        }}
-      >
-        <div className="flex items-center gap-3">
-          <div className="whatsapp-icono">
-            <Phone size={17} />
-          </div>
-
-          <div>
-            <h3 className="text-base font-semibold">Últimos clientes PDP</h3>
-
-            <p
-              className="mt-1 text-xs"
-              style={{
-                color: "var(--color-texto-suave)",
-              }}
-            >
-              Clientes disponibles para la campaña seleccionada.
-            </p>
-          </div>
-        </div>
-
-        <span className="chip chip-neutral">
-          {seleccionados.length} seleccionados
-        </span>
-      </div>
-
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b text-left">
+            <th className="w-10 p-3" />
+            <th className="p-3">Cliente</th>
+            <th className="p-3">Status PDP</th>
+            <th className="p-3">Monto</th>
+            <th className="p-3">Fecha PDP</th>
+            <th className="p-3">Teléfonos destino</th>
+            <th className="p-3">Mensaje</th>
+          </tr>
+        </thead>
+        <tbody>
+          {clientes.map((c) => (
             <tr
-              className="border-b text-left"
+              key={c.id}
+              className="border-b"
               style={{
-                borderColor: "var(--color-borde)",
+                background: seleccionados.includes(c.id)
+                  ? "var(--color-accion-suave)"
+                  : "transparent",
               }}
             >
-              <th className="w-[45px] px-4 py-3" />
-
-              <th className="px-4 py-3">Cliente</th>
-
-              <th className="px-4 py-3">Status PDP</th>
-
-              <th className="px-4 py-3">Monto</th>
-
-              <th className="px-4 py-3">Fecha PDP</th>
-
-              <th className="px-4 py-3">Teléfono destino</th>
-
-              <th className="px-4 py-3">Mensaje</th>
-            </tr>
-          </thead>
-
-          <tbody>
-            {clientes.map((cliente) => {
-              const seleccionado = seleccionados.includes(cliente.id);
-
-              const manual = usarTelefonoManual[cliente.id] ?? false;
-
-              const celularesWhatsapp = obtenerCelularesWhatsapp(cliente);
-
-              const telefonoSeleccionadoOriginal =
-                telefonosSeleccionados[cliente.id] ?? "";
-
-              const telefonoSeleccionadoExiste = celularesWhatsapp.some(
-                (telefono) =>
-                  String(telefono.id_phone) === telefonoSeleccionadoOriginal,
-              );
-
-              const telefonoSeleccionado = telefonoSeleccionadoExiste
-                ? telefonoSeleccionadoOriginal
-                : celularesWhatsapp[0]
-                  ? String(celularesWhatsapp[0].id_phone)
-                  : "";
-
-              const telefonoManual = telefonosManuales[cliente.id] ?? "";
-
-              const clienteParaVistaPrevia: ClientePdp = {
-                ...cliente,
-
-                telefonos: celularesWhatsapp,
-
-                telefonoPredeterminado: celularesWhatsapp[0]?.phone ?? "",
-              };
-
-              return (
-                <tr
-                  key={`${cliente.idc}-${cliente.id}`}
-                  className="border-b"
-                  style={{
-                    borderColor: "var(--color-borde)",
-
-                    background: seleccionado
-                      ? "var(--color-accion-suave)"
-                      : "transparent",
-                  }}
+              <td className="p-3 align-top">
+                <input
+                  type="checkbox"
+                  checked={seleccionados.includes(c.id)}
+                  onChange={() => onToggle(c.id)}
+                  disabled={disabled}
+                  aria-label={"Seleccionar " + c.cliente}
+                />
+              </td>
+              <td className="p-3 align-top">
+                <p className="font-semibold">{c.cliente}</p>
+                <p className="mt-1 text-xs">
+                  {c.idc} · {c.gestor ?? "Sin gestor"}
+                </p>
+                <SeguimientoClienteWhatsapp
+                  idc={c.idc}
+                  seguimiento={c.seguimiento}
+                />
+              </td>
+              <td className="p-3 align-top">
+                <span className="chip chip-accion">
+                  {c.statusPdp ?? "Sin status PDP"}
+                </span>
+              </td>
+              <td className="p-3 align-top dato-numerico">
+                {c.montoPdp == null
+                  ? "—"
+                  : (c.moneda?.trim().toUpperCase() === "USD" ? "$" : "S/") +
+                    " " +
+                    c.montoPdp.toLocaleString("es-PE", {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+              </td>
+              <td className="p-3 align-top">{formatearFechaCalendarioLima(c.fechaPdp)}</td>
+              <td className="p-3 align-top">
+                <SeleccionTelefonosWhatsapp
+                  cliente={c}
+                  seleccionados={telefonosSeleccionados[c.id] ?? []}
+                  manuales={telefonosManuales[c.id] ?? []}
+                  onToggle={(n) => onTelefono(c.id, n)}
+                  onSeleccionar={(ns) => onSeleccionarTelefonos(c.id, ns)}
+                  onAgregarManual={(n) => onAgregarManual(c.id, n)}
+                  soloSinExito={soloSinExito}
+                  disabled={disabled}
+                />
+              </td>
+              <td className="p-3 align-top">
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 text-sm"
+                  style={{ color: "var(--color-accion)" }}
+                  onClick={() => onVistaPrevia(c)}
                 >
-                  <td className="px-4 py-4 align-top">
-                    <button
-                      type="button"
-                      aria-label={
-                        seleccionado ? "Quitar cliente" : "Seleccionar cliente"
-                      }
-                      onClick={() => onToggle(cliente.id)}
-                      className="flex h-5 w-5 items-center justify-center rounded border"
-                      style={{
-                        borderColor: seleccionado
-                          ? "var(--color-accion)"
-                          : "var(--color-borde-fuerte)",
-
-                        background: seleccionado
-                          ? "var(--color-accion)"
-                          : "var(--color-superficie)",
-                      }}
-                    >
-                      {seleccionado && (
-                        <Check size={13} color="white" strokeWidth={3} />
-                      )}
-                    </button>
-                  </td>
-
-                  <td className="px-4 py-4 align-top">
-                    <p className="truncate font-medium">{cliente.cliente}</p>
-
-                    <p
-                      className="mt-1 text-xs"
-                      style={{
-                        color: "var(--color-texto-suave)",
-                      }}
-                    >
-                      {cliente.idc}
-                      {" · "}
-                      {cliente.gestor ?? "Sin gestor"}
-                    </p>
-                  </td>
-
-                  <td className="px-4 py-4 align-top">
-                    <span className="chip chip-accion">
-                      {cliente.statusPdp ?? "Sin Status PDP"}
-                    </span>
-                  </td>
-
-                  <td className="px-4 py-4 align-top dato-numerico">
-                    {formatearMonto(cliente)}
-                  </td>
-
-                  <td className="px-4 py-4 align-top dato-numerico">
-                    {cliente.fechaPdp || "—"}
-                  </td>
-
-                  <td className="min-w-[245px] px-4 py-4 align-top">
-                    {!manual ? (
-                      <>
-                        <div className="flex items-center gap-2">
-                          <select
-                            value={telefonoSeleccionado}
-                            onChange={(event) =>
-                              onTelefono(cliente.id, event.target.value)
-                            }
-                            className="whatsapp-select h-[38px] min-w-0 flex-1"
-                          >
-                            {celularesWhatsapp.length > 0 ? (
-                              celularesWhatsapp.map((telefono) => (
-                                <option
-                                  key={`${cliente.idc}-${telefono.id_phone}`}
-                                  value={String(telefono.id_phone)}
-                                >
-                                  {telefono.phone}
-                                </option>
-                              ))
-                            ) : (
-                              <option value="">Sin celular válido</option>
-                            )}
-                          </select>
-
-                          <ChevronDown
-                            size={15}
-                            className="pointer-events-none -ml-8 mr-2"
-                            style={{
-                              color: "var(--color-texto-suave)",
-                            }}
-                          />
-                        </div>
-
-                        <button
-                          type="button"
-                          className="mt-1 text-[11px] font-medium"
-                          style={{
-                            color: "var(--color-accion)",
-                          }}
-                          onClick={() => onUsarManual(cliente.id)}
-                        >
-                          Ingresar otro número
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <div className="flex items-center gap-2">
-                          <input
-                            value={telefonoManual}
-                            onChange={(event) =>
-                              onTelefonoManual(
-                                cliente.id,
-                                normalizarTelefonoManual(event.target.value),
-                              )
-                            }
-                            inputMode="numeric"
-                            maxLength={9}
-                            placeholder="9XXXXXXXX"
-                            className="input-estandar h-[38px] min-w-0 flex-1"
-                          />
-                        </div>
-
-                        <button
-                          type="button"
-                          className="mt-1 text-[11px] font-medium"
-                          style={{
-                            color: "var(--color-accion)",
-                          }}
-                          onClick={() => onVolverRegistrado(cliente.id)}
-                        >
-                          Usar registrado
-                        </button>
-                      </>
-                    )}
-                  </td>
-
-                  <td className="px-4 py-4 align-top">
-                    <button
-                      type="button"
-                      className="inline-flex items-center gap-2 text-sm font-medium"
-                      style={{
-                        color: "var(--color-accion)",
-                      }}
-                      onClick={() => onVistaPrevia(clienteParaVistaPrevia)}
-                    >
-                      <Eye size={15} />
-                      Ver mensaje
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      <div
-        className="flex items-center justify-between border-t p-4 sm:p-5"
-        style={{
-          borderColor: "var(--color-borde)",
-        }}
-      >
-        <span className="text-sm font-medium">
-          {seleccionados.length} seleccionados
-        </span>
-
-        <span
-          className="text-xs"
-          style={{
-            color: "var(--color-texto-suave)",
-          }}
-        >
-          {clientes.length} clientes disponibles
-        </span>
-      </div>
-    </section>
+                  <Eye size={15} />
+                  Ver mensaje
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

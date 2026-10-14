@@ -18,6 +18,7 @@ import {
   Clock,
 } from "lucide-react";
 import HeaderPanelAdmin from "@/components/HeaderPanelAdmin";
+import { formatearFechaHoraLima } from "@/lib/fecha-lima";
 
 type ResumenImport = {
   totalFilasLeidas: number;
@@ -39,7 +40,7 @@ type ImportRegistrado = {
 };
 
 function formatearFecha(iso: string): string {
-  return new Date(iso).toLocaleString("es-PE", {
+  return formatearFechaHoraLima(iso, {
     day: "2-digit",
     month: "short",
     year: "numeric",

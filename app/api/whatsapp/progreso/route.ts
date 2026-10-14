@@ -9,6 +9,12 @@ import { consultarUno } from "@/lib/postgres";
 
 import { leerSesionActual } from "@/lib/auth";
 
+import {
+  obtenerCampanaAutorizada,
+  DESTINOS_ACTUALES_SQL,
+  CABECERAS_CAMPANAS,
+  ErrorCampanaWhatsapp,
+} from "@/lib/whatsapp/campanas";
 export const runtime = "nodejs";
 
 const ROLES_PERMITIDOS = ["administrador", "supervisor", "gestor"];
@@ -46,7 +52,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  if (!ROLES_PERMITIDOS.includes(sesion.rol)) {
+  if (sesion.debeCambiarContrasena || !ROLES_PERMITIDOS.includes(sesion.rol)) {
     return NextResponse.json(
       {
         error: "No tienes permiso para consultar el progreso.",
@@ -71,6 +77,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    await obtenerCampanaAutorizada(sesion, campanaId);
     const campana = await consultarUno<Campana>(
       `
           SELECT
@@ -134,9 +141,7 @@ export async function GET(request: NextRequest) {
             )::int
               AS preparados
 
-          FROM whatsapp_campana_destinatarios
-
-          WHERE campana_id = $1
+          FROM (${DESTINOS_ACTUALES_SQL}) AS actuales
         `,
       [campanaId],
     );
@@ -155,41 +160,43 @@ export async function GET(request: NextRequest) {
 
     const pendientes = Math.max(0, total - procesados);
 
-    return NextResponse.json({
-      ok: true,
+    return NextResponse.json(
+      {
+        ok: true,
 
-      campanaId,
+        campanaId,
 
-      numeroSalida: campana.numero_salida,
+        numeroSalida: campana.numero_salida,
 
-      estado: campana.estado,
+        estado: campana.estado,
 
-      total,
+        total,
 
-      procesados,
+        procesados,
 
-      enviados,
+        enviados,
 
-      fallidos: errores,
+        fallidos: errores,
 
-      sinTelefono,
+        sinTelefono,
 
-      preparados,
+        preparados,
 
-      pendientes,
-    });
+        pendientes,
+      },
+      { headers: CABECERAS_CAMPANAS },
+    );
   } catch (error) {
-    console.error("Error consultando progreso WhatsApp:", error);
-
     return NextResponse.json(
       {
         error:
-          error instanceof Error
+          error instanceof ErrorCampanaWhatsapp
             ? error.message
             : "No se pudo consultar el progreso.",
       },
       {
-        status: 500,
+        status: error instanceof ErrorCampanaWhatsapp ? error.status : 500,
+        headers: CABECERAS_CAMPANAS,
       },
     );
   }

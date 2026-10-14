@@ -225,6 +225,11 @@ comunicación privada mTLS. La interfaz se conserva; la configuración y el
 despliegue requieren aprobación manual. Los perfiles SMB anteriores permanecen
 intactos.
 
+WhatsApp Masivo permite elegir explícitamente uno o varios celulares por cliente
+y seguir sus resultados por campaña. Consulta la [selección y el seguimiento de
+envíos](docs/WHATSAPP_SELECCION_SEGUIMIENTO.md) para el uso, las protecciones contra
+duplicados, la compatibilidad y las pruebas de esta mejora.
+
 Los respaldos se crean con `pg_dump` y se pueden descargar desde el panel de
 Backups. El programador realiza respaldos los **lunes y jueves a las 17:00, hora
 de Lima**, mientras el proceso de la aplicación esté en ejecución. Los volúmenes

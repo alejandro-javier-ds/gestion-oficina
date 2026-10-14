@@ -6,8 +6,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { consultarFilas, consultarUno } from "@/lib/postgres";
 import { leerSesionActual } from "@/lib/auth";
 import { CODIGOS_DOLARES, separarMontoPorMoneda } from "@/lib/monedas";
+import { columnaFechaLimaSql, fechaActualLima, inicioMesActualLima } from "@/lib/fecha-lima";
 
 export const runtime = "nodejs";
+
+const FECHA_PROMESA_LIMA = columnaFechaLimaSql("pp.fecha_hora");
+const FECHA_PROMESA_BASE_LIMA = columnaFechaLimaSql("fecha_hora");
 
 type FilaConteo = {
   clave: string;
@@ -68,13 +72,9 @@ function rangoMesActual(): {
   desde: string;
   hasta: string;
 } {
-  const hoy = new Date();
-
-  const inicio = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
-
   return {
-    desde: inicio.toISOString().slice(0, 10),
-    hasta: hoy.toISOString().slice(0, 10),
+    desde: inicioMesActualLima(),
+    hasta: fechaActualLima(),
   };
 }
 
@@ -156,8 +156,7 @@ export async function GET(request: NextRequest) {
 
       FROM promesas_pago pp
 
-      WHERE LEFT(pp.fecha_hora, 10)
-        BETWEEN $1 AND $2
+      WHERE ${FECHA_PROMESA_LIMA} BETWEEN $1::date AND $2::date
 
       ORDER BY
         pp.fecha_hora DESC
@@ -175,8 +174,7 @@ export async function GET(request: NextRequest) {
 
       FROM promesas_pago
 
-      WHERE LEFT(fecha_hora, 10)
-        BETWEEN $1 AND $2
+      WHERE ${FECHA_PROMESA_BASE_LIMA} BETWEEN $1::date AND $2::date
 
       GROUP BY estado
     `,
@@ -191,8 +189,7 @@ export async function GET(request: NextRequest) {
 
       FROM promesas_pago
 
-      WHERE LEFT(fecha_hora, 10)
-        BETWEEN $1 AND $2
+      WHERE ${FECHA_PROMESA_BASE_LIMA} BETWEEN $1::date AND $2::date
 
       GROUP BY tipo
     `,
@@ -237,8 +234,7 @@ export async function GET(request: NextRequest) {
 
       FROM promesas_pago pp
 
-      WHERE LEFT(pp.fecha_hora, 10)
-        BETWEEN $1 AND $2
+      WHERE ${FECHA_PROMESA_LIMA} BETWEEN $1::date AND $2::date
 
       ORDER BY
         pp.fecha_hora DESC
@@ -272,7 +268,7 @@ export async function GET(request: NextRequest) {
           WHERE UPPER(TRIM(moneda)) = ANY($3::text[])
         ), 0) AS dolares
       FROM promesas_pago
-      WHERE LEFT(fecha_hora, 10) BETWEEN $1 AND $2
+      WHERE ${FECHA_PROMESA_BASE_LIMA} BETWEEN $1::date AND $2::date
     `,
     [desde, hasta, CODIGOS_DOLARES],
   );

@@ -44,6 +44,7 @@ const ITEMS: ItemMenu[] = [
     etiqueta: "Subir Portafolio",
     ruta: "/admin/portafolio",
     icono: <Upload size={18} />,
+    rolesPermitidos: ["administrador", "supervisor"],
   },
   {
     etiqueta: "Usuarios",

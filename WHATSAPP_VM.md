@@ -156,7 +156,7 @@ En Container Apps, agregar tres secretos con el contenido de `ca.crt`, `client.c
 
 El puerto de ingreso del CRM permanece en 3000. No desactivar validación de certificados ni usar `NODE_TLS_REJECT_UNAUTHORIZED=0`. El servidor tiene SAN para la IP privada; no reemplazar la URL por un nombre DNS sin emitir un certificado con ese SAN.
 
-Desplegar la imagen del CRM construida con este mismo SHA por el flujo habitual, sin activar tráfico antes de probar conectividad HTTPS con mTLS desde su red. GitHub Actions actual construye y publica únicamente la imagen del CRM cuando se integra en `main`; la imagen del worker se construye manualmente arriba. La publicación de la imagen en ACR no despliega revisiones automáticamente.
+Desplegar la imagen del CRM construida con este mismo SHA por el flujo habitual, sin activar tráfico antes de probar conectividad HTTPS con mTLS desde su red. GitHub Actions valida y compila también la imagen del worker, pero publica en ACR únicamente la imagen del CRM cuando se integra en `main`; la imagen del worker se construye manualmente arriba. La publicación en ACR no despliega revisiones automáticamente.
 
 En la consola de la nueva revisión del CRM, comprobar la conectividad privada sin abrir Chromium ni leer perfiles:
 
@@ -185,19 +185,14 @@ Antes de mover tráfico, cerrar los Chromium de las revisiones anteriores median
 
 ## Respaldos de perfiles y recuperación
 
-La copia contiene perfiles, propietarios y registro de envíos. Se cifra en streaming con AES-256-GCM; la clave se envuelve con RSA-OAEP/SHA-256 usando la clave pública de recuperación. No se incluye la CA, certificados TLS, temporales de runtime ni enlaces Singleton. No se programa un horario nuevo ni se modifica el respaldo PostgreSQL a Blob.
+La copia contiene perfiles, propietarios y registro de envíos. Se cifra en streaming con AES-256-GCM; la clave se envuelve con RSA-OAEP/SHA-256 usando la clave pública de recuperación. No se incluye la CA, certificados TLS, temporales de runtime ni enlaces Singleton. La automatización descrita abajo permanece desactivada hasta instalar y habilitar manualmente su temporizador.
 
 Detener el worker, esperar su cierre ordenado y después ejecutar el respaldo. El bloqueo global rechaza una copia en caliente aunque se omita este paso. Esperar el final de campañas autorizadas antes de mantenimiento. El servicio deja de admitir operaciones, espera trabajos en curso y cierra Chromium; Docker concede 120 segundos. Un resultado de envío incierto requiere revisión humana y no se reenvía automáticamente.
 
 ```bash
 sudo systemctl stop whatsapp-worker.service
-IMAGE_ID="$(sudo sed -n 's/^WHATSAPP_IMAGE=//p' /etc/whatsapp-worker/worker.env)"
-DATA_UUID="$(findmnt -rn --mountpoint /srv/whatsapp-data -o UUID)"
-BACKUP_RESULT="$(sudo docker run --rm --read-only --network none --cap-drop ALL \
-  --security-opt no-new-privileges:true --user 999:988 \
-  --mount type=bind,src=/srv/whatsapp-data,dst=/data \
-  --mount type=bind,src=/etc/whatsapp-worker/recovery-public,dst=/recovery,readonly \
-  -e "WHATSAPP_DATA_UUID=$DATA_UUID" "$IMAGE_ID" backup)"
+BACKUP_RESULT="$(sudo docker compose --profile maintenance --env-file /etc/whatsapp-worker/worker.env \
+  -f /opt/whatsapp-worker/compose.yaml run --rm --no-deps --no-TTY backup)"
 printf '%s\n' "$BACKUP_RESULT"
 sudo systemctl start whatsapp-worker.service
 ```
@@ -218,9 +213,116 @@ sudo docker run --rm --read-only --network none --cap-drop ALL \
 
 La recuperación autentica el cifrado antes de extraer, rechaza rutas externas, enlaces y archivos especiales, sincroniza los archivos con el disco y devuelve `/data/recovered-UUID`. No sustituye perfiles actuales. Revisar esa carpeta y conservar un respaldo de los perfiles actuales antes de activar cualquier recuperación mediante un cambio autorizado. Restaurar juntos perfiles, `sesiones.json` y `envios`: retroceder únicamente el registro de envíos podría perder información de deduplicación. No activar un respaldo antiguo de una campaña ya ejecutada sin reconciliar sus registros.
 
+## Automatización diaria en Azure Blob
+
+La unidad `whatsapp-backup.timer` está configurada para las 03:00 de `America/Lima` y tiene `Persistent=false`; no ejecuta un respaldo atrasado al volver de una apagada. No se habilita desde el código ni desde el servicio. El servicio diario usa el disco ext4 existente, crea el `.wa-backup` con el mecanismo cifrado actual, sube a `backups-whatsapp` por HTTPS con un token obtenido en memoria desde IMDS y la identidad administrada de la VM, descarga el objeto para comprobar su SHA-256 y tamaño, y conserva todos los respaldos locales y remotos. No usa claves de almacenamiento ni las credenciales del CRM.
+
+El coordinador comprueba antes del drenaje que `/etc/whatsapp-worker/recovery-public/public.pem` existe, es legible y no es un enlace simbólico. Después ejecuta el servicio `backup` del perfil Compose `maintenance`, con UID/GID `999:988`, sistema de archivos raíz de solo lectura, capacidades retiradas y `network_mode: none`. Ese contenedor monta el disco de perfiles en `/data` como solo lectura y recibe escritura únicamente en `/backup`, enlazado a `/srv/whatsapp-data/profile-backups`. También monta únicamente la clave pública de recuperación en `/recovery/public.pem` como solo lectura y un único archivo `worker.lock` compartido para `flock`; no monta la clave privada, certificados TLS, puertos ni el socket de mantenimiento del worker. El preflight crea ese bloqueo dentro de `/run/whatsapp-lock` si falta, con propietario `999:988` y permisos `0600`; no depende del bloqueo antiguo dentro de los perfiles. El contenedor no modifica perfiles ni se conecta a Azure; la subida a Blob la realiza luego el coordinador del host con la identidad administrada.
+
+La coordinación bloquea nuevas campañas y operaciones de WhatsApp mientras se prepara el mantenimiento. Las reservas de campañas activas se guardan en `/srv/whatsapp-data/.active-campaigns.json`; el envío de cada destinatario requiere la reserva firmada asociada. La compuerta de mantenimiento se escribe atómicamente en `/run/whatsapp-worker/maintenance.json`, dentro del directorio runtime compartido y preservado por `systemd`; un reinicio inesperado del worker no vuelve a admitir operaciones. El archivo de `flock` está separado en `/run/whatsapp-lock/worker.lock` y se monta como archivo individual en los contenedores. Al solicitar mantenimiento, se cierra la admisión nueva, se permiten las operaciones de las campañas ya reservadas y se espera su cierre y el de las solicitudes activas. Si el registro no se puede validar, la versión del CRM no usa reservas, hay errores de persistencia o una campaña no termina en dos horas, el servicio omite la copia, anota el motivo y conserva WhatsApp activo. Si inicia la copia, `systemd` vuelve a iniciar el worker, comprueba su socket de salud y solo abre de nuevo la compuerta si no quedan campañas ni operaciones activas.
+
+Al iniciar un worker nuevo, cualquier reserva persistida pertenece a operaciones del proceso anterior, que ya terminó. Antes de quitarla de la lista activa, el worker guarda una copia privada en `/srv/whatsapp-data/.campaign-recovery`; si no puede archivarla y sincronizarla, no inicia. El identificador de reserva anterior deja de autorizar envíos. Esto no cambia los estados de PostgreSQL ni reintenta destinatarios: la campaña y los resultados inciertos deben reconciliarse antes de preparar otro envío. El diario durable en `/srv/whatsapp-data/envios` sigue rechazando automáticamente un envío cuyo resultado quedó incierto.
+
+Las subidas pendientes se vuelven a intentar en futuras ejecuciones. El nombre local único también es el nombre del blob. La subida usa bloques deterministas y `If-None-Match: *`; un objeto existente solo se acepta si coincide su SHA-256 y tamaño reales. Una colisión distinta falla sin sobrescribir. Los marcadores de verificación se guardan como metadatos operativos root-only en `/var/lib/whatsapp-worker-backup`, no dentro de los perfiles. No se elimina ningún respaldo para recuperar espacio.
+
+Si una terminación forzada deja la compuerta cerrada, el worker sigue bloqueando WhatsApp. Después de comprobar que el worker está saludable y de revisar que no haya campañas ni operaciones activas, el operador puede liberarla de forma segura; el comando rechaza la liberación mientras encuentre actividad:
+
+```bash
+sudo python3 /opt/whatsapp-worker/backup-coordinator.py --abort-maintenance
+```
+
+El nuevo código debe publicarse en este orden para mantener compatibilidad: primero la imagen del worker con `WHATSAPP_REQUIRE_CAMPAIGN_LEASES=false` (valor inicial); después la revisión del CRM que reserva y libera cada campaña; por último, habilitar `WHATSAPP_REQUIRE_CAMPAIGN_LEASES=true` en `/etc/whatsapp-worker/worker.env` y reiniciar el worker. Si se cambia ese orden, las campañas nuevas pueden ser rechazadas por una de las dos versiones. No activar el temporizador hasta comprobar que el CRM actualizado está atendiendo todo el tráfico y que el worker registra reservas activas correctamente. La automatización no cambia PostgreSQL.
+
+### Instalar y validar sin activar el horario
+
+Ubuntu 24.04 ya incluye Python 3, systemd, `findmnt` y `flock`; el worker existente aporta Docker Compose. No se agrega una clave, contraseña, paquete Azure ni nueva regla de red. El Container App y la VM deben estar en las versiones revisadas antes de poner `WHATSAPP_REQUIRE_CAMPAIGN_LEASES=true`.
+
+Desde el checkout del commit revisado en la VM, instalar el coordinador y las unidades sin habilitar el timer:
+
+```bash
+cd /tmp/gestion-oficina-worker
+sudo install -o root -g root -m 750 docker/whatsapp-vm/backup-coordinator.py /opt/whatsapp-worker/backup-coordinator.py
+sudo install -o root -g root -m 755 docker/whatsapp-vm/preflight.sh /opt/whatsapp-worker/preflight.sh
+sudo install -o root -g root -m 644 docker/whatsapp-vm/compose.yaml /opt/whatsapp-worker/compose.yaml
+sudo install -o root -g root -m 644 docker/whatsapp-vm/whatsapp-worker.service /etc/systemd/system/whatsapp-worker.service
+sudo install -o root -g root -m 644 docker/whatsapp-vm/whatsapp-backup.service /etc/systemd/system/whatsapp-backup.service
+sudo install -o root -g root -m 644 docker/whatsapp-vm/whatsapp-backup.timer /etc/systemd/system/whatsapp-backup.timer
+sudo systemctl daemon-reload
+sudo systemd-analyze verify /etc/systemd/system/whatsapp-worker.service /etc/systemd/system/whatsapp-backup.service /etc/systemd/system/whatsapp-backup.timer
+systemd-analyze calendar '*-*-* 03:00:00 America/Lima'
+sudo systemctl is-enabled whatsapp-backup.timer || true
+```
+
+Al reiniciar `whatsapp-worker.service`, `systemd` crea `/run/whatsapp-worker` y `/run/whatsapp-lock`; el preflight ajusta los permisos de socket, crea el archivo compartido de `flock` de forma segura y aborta si encuentra un enlace o tipo de archivo inesperado.
+
+La instalación de la clave pública se hace una sola vez desde el canal administrativo aprobado. Antes de una ejecución, confirmar que el archivo exista, pueda leerse y no sea un enlace; el preflight del coordinador repite esas comprobaciones y omite el mantenimiento si alguna falla:
+
+```bash
+sudo install -d -o root -g 988 -m 750 /etc/whatsapp-worker/recovery-public
+sudo install -o root -g 988 -m 444 /RUTA_SEGURA/recovery-public.pem /etc/whatsapp-worker/recovery-public/public.pem
+sudo test -f /etc/whatsapp-worker/recovery-public/public.pem
+sudo test ! -L /etc/whatsapp-worker/recovery-public/public.pem
+sudo test -r /etc/whatsapp-worker/recovery-public/public.pem
+sudo -u whatsappsvc test -w /srv/whatsapp-data/profile-backups
+```
+
+El coordinador invoca el servicio aislado mediante `docker compose --profile maintenance run --rm --no-deps backup`. No se debe ejecutar el perfil como servicio permanente. La clave privada de recuperación se conserva fuera del contenedor y solo se proporciona temporalmente para una restauración autorizada.
+
+`is-enabled` debe indicar que aún no está habilitado. Antes del primer respaldo automático, actualizar el Container App y el worker en el orden indicado, configurar la reserva obligatoria y comprobar su salud:
+
+```bash
+sudo sed -i '/^WHATSAPP_REQUIRE_CAMPAIGN_LEASES=/d' /etc/whatsapp-worker/worker.env
+printf '%s\n' 'WHATSAPP_REQUIRE_CAMPAIGN_LEASES=true' | sudo tee -a /etc/whatsapp-worker/worker.env >/dev/null
+sudo chmod 600 /etc/whatsapp-worker/worker.env
+sudo systemctl restart whatsapp-worker.service
+sudo systemctl is-active whatsapp-worker.service
+sudo docker compose --env-file /etc/whatsapp-worker/worker.env -f /opt/whatsapp-worker/compose.yaml exec -T worker node /app/health.mjs
+```
+
+Las pruebas de regresión se conservan únicamente en el entorno local y no se publican con el repositorio.
+
+Tras revisar y autorizar la primera ejecución real, se puede iniciar una sola copia de forma manual para comprobar drenaje, cifrado, identidad administrada, SHA-256 remoto y reinicio:
+
+```bash
+sudo systemctl start whatsapp-backup.service
+sudo systemctl status whatsapp-backup.service --no-pager
+sudo journalctl -u whatsapp-backup.service -n 100 --no-pager
+sudo systemctl is-active whatsapp-worker.service
+sudo docker compose --env-file /etc/whatsapp-worker/worker.env -f /opt/whatsapp-worker/compose.yaml exec -T worker node /app/health.mjs
+```
+
+La línea `blob_backup_verificado` registra el nombre, bytes y prefijo del SHA-256 del contenido cifrado cuya descarga se comparó byte por byte. `respaldo_omitido` o `mantenimiento_omitido` debe revisarse antes de volver a intentar. Ejecutar este servicio manualmente sí detiene y vuelve a iniciar Chromium, pero solo después de confirmar que no hay campañas; no forma parte de las pruebas locales.
+
+Para activar el horario después de la revisión, habilitarlo manualmente y verificar que el próximo vencimiento es a las 03:00 de Lima:
+
+```bash
+sudo systemctl enable --now whatsapp-backup.timer
+systemctl list-timers whatsapp-backup.timer
+sudo systemctl show whatsapp-backup.timer -p Persistent
+```
+
+Para desactivar el horario y detener una ejecución en curso:
+
+```bash
+sudo systemctl disable --now whatsapp-backup.timer
+sudo systemctl stop whatsapp-backup.service
+```
+
+Para revertir esta automatización, deshabilitar el timer, detener el servicio, quitar sus dos unidades y recargar systemd. El estado de reservas queda en el disco; no borrarlo mientras se desconozca si una campaña sigue activa. Para revertir también el código, primero devolver el Container App a la versión anterior y dejar el worker con `WHATSAPP_REQUIRE_CAMPAIGN_LEASES=false`; luego puede instalarse la imagen anterior del worker. No quitar los blobs ni los respaldos locales.
+
+```bash
+sudo systemctl disable --now whatsapp-backup.timer
+sudo systemctl stop whatsapp-backup.service
+sudo rm -f /etc/systemd/system/whatsapp-backup.timer /etc/systemd/system/whatsapp-backup.service
+sudo systemctl daemon-reload
+sudo rm -f /opt/whatsapp-worker/backup-coordinator.py
+```
+
+La VM debe conservar acceso privado a IMDS y al nombre DNS HTTPS del Private Endpoint. La identidad necesita `Storage Blob Data Contributor` en el contenedor indicado; no es necesario abrir Storage a Internet. El cliente usa el endpoint normal de Blob, por lo que la resolución DNS y el Private Endpoint existentes determinan el destino de red. La API de Blob exige autorización de datos para `Put Block` y admite la condición de creación `If-None-Match: *`; la VM obtiene la identidad administrada desde IMDS ([guía de IMDS para VMs](https://learn.microsoft.com/en-us/azure/virtual-machines/instance-metadata-service), [Put Block](https://learn.microsoft.com/en-us/rest/api/storageservices/put-block), [condiciones Blob](https://learn.microsoft.com/en-us/rest/api/storageservices/specifying-conditional-headers-for-blob-service-operations)).
+
 ## Validación y límites
 
-Las pruebas locales utilizan certificados sintéticos, perfiles descartables y un WhatsApp simulado en Chromium real. Cubren TLS, certificados, roles, capacidades, aislamiento de números temporales, visor HTTPS/WSS con mouse y teclado, QR, confirmación DOM de envío, ausencia de duplicados, IndexedDB con 1 MiB, reinicio ordenado, interrupción SIGKILL y recuperación cifrada. Los tests se mantienen locales, conforme a la política del repositorio.
+Las validaciones previas utilizaron certificados sintéticos, perfiles descartables y un WhatsApp simulado en Chromium real. Cubrieron TLS, certificados, roles, capacidades, aislamiento de números temporales, visor HTTPS/WSS con mouse y teclado, QR, confirmación DOM de envío, ausencia de duplicados, IndexedDB con 1 MiB, reinicio ordenado, interrupción SIGKILL y recuperación cifrada. Los archivos de pruebas se mantienen únicamente en local y no se incluyen en GitHub.
 
 Resultados obtenidos el 12 de octubre de 2026:
 
@@ -236,7 +338,9 @@ Resultados obtenidos el 12 de octubre de 2026:
 | Copia en frío y restauración | 362 archivos idénticos; originales conservados; cifrado alterado, rutas externas y enlaces rechazados |
 | Contexto Docker efectivo | 201 archivos; sin claves, datos, perfiles ni tests |
 
-Para repetir localmente las pruebas de integración: `node tests/whatsapp-vm-native.mjs`. Ese ejecutor crea y elimina únicamente contenedores, red y volúmenes descartables que identifica con su propia etiqueta; utiliza las imágenes locales `gestion-oficina:whatsapp-vm-validation` y `gestion-oficina:whatsapp-crm-validation`, construidas con sus respectivos Dockerfiles. La vinculación comprobada es sintética y no demuestra que un teléfono real esté vinculado en Azure.
+Estos resultados corresponden a validaciones anteriores, no a la nueva automatización de respaldos. GitHub Actions compila e inspecciona las imágenes del worker y del CRM; las suites de pruebas permanecen locales.
+
+Las pruebas de integración previas usaron contenedores, redes y volúmenes descartables etiquetados para la validación. La vinculación comprobada fue sintética y no demuestra que un teléfono real esté vinculado en Azure.
 
 No se vinculó ningún teléfono ni se envió ningún mensaje real. No se comprobó la conectividad desde la revisión de Azure, ni certificados, montajes, tamaños o reinicios reales de esta VM desde este trabajo. La prueba de aceptación debe comprobar, con autorización, QR y vinculación reales, visor de la misma sesión, reinicio del worker y de la VM, y finalmente un único envío a un destinatario de prueba autorizado.
 
@@ -247,13 +351,13 @@ Una VM única tiene un punto de fallo y mantenimiento con interrupción de Whats
 | Área | Archivos |
 | --- | --- |
 | Transporte y gateway | `docker/whatsapp-wire.mjs`, `docker/whatsapp-wire.d.mts`, `docker/gateway.mjs`, `docker/start.mjs` |
-| Servicio de la VM | `docker/whatsapp-vm/Dockerfile`, `compose.yaml`, `entrypoint.sh`, `environment.example`, `worker.mts`, `server.mjs`, `storage.mjs`, `journal.mjs`, `health.mjs`, `preflight.sh`, `whatsapp-worker.service` |
+| Servicio y coordinación | `docker/whatsapp-vm/Dockerfile`, `compose.yaml`, `entrypoint.sh`, `environment.example`, `worker.mts`, `server.mjs`, `coordination.mjs`, `backup-coordinator.py`, `whatsapp-worker.service`, `whatsapp-backup.service`, `whatsapp-backup.timer` |
 | Recuperación en frío | `docker/whatsapp-vm/maintenance.mjs`, `docker/whatsapp-vm/extract.py` |
 | Motores y permisos | `lib/whatsapp/playwright.ts`, `playwright-local.ts`, `envio.ts`, `envio-local.ts`, `acceso-vinculacion.ts`, `perfil.ts`, `whatsapp-browser.ts`, `whatsapp-session.ts` |
 | API de vinculación | `app/api/whatsapp/playwright/iniciar/route.ts`, `estado/route.ts`, `estados/route.ts`, `qr/route.ts`, `cerrar-temporal/route.ts` |
 | Visor y envío | `app/api/whatsapp/visor/preparar/route.ts`, `app/api/whatsapp/visor/autorizar/route.ts`, `app/api/whatsapp/enviar/route.ts` |
-| Exclusiones y documentación | `.gitignore`, `.dockerignore`, `.gitattributes`, `WHATSAPP_VM.md`, `DOCKER.md`, `README.md` |
+| Exclusión de pruebas y documentación | `.gitignore`, `.dockerignore`, `.github/workflows/docker.yml`, `WHATSAPP_VM.md` |
 
-La interfaz React, el esquema PostgreSQL, los respaldos a Blob, los volúmenes Azure Files y el workflow de publicación permanecen sin modificaciones. Los nuevos tests se conservan en `tests/` y quedan excluidos tanto de Git como del contexto Docker.
+La interfaz React, el esquema PostgreSQL, los respaldos PostgreSQL a Blob y los volúmenes Azure Files permanecen sin modificaciones. Los archivos de pruebas quedan fuera de GitHub y del contexto Docker; sus copias locales se conservan.
 
 Referencias técnicas: [TLS de Node.js](https://nodejs.org/download/release/latest-jod/docs/api/tls.html), [agente HTTPS de Node.js](https://nodejs.org/docs/latest-v24.x/api/https.html#new-agentoptions), [bind mounts de Docker](https://docs.docker.com/engine/storage/bind-mounts/), [Compose y apagado ordenado](https://docs.docker.com/reference/compose-file/services/), [dependencias de montaje de systemd](https://github.com/systemd/systemd/blob/main/man/systemd.unit.xml).

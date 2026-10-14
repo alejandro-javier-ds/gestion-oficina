@@ -17,6 +17,7 @@ import { consultarFilas, consultarUno } from "@/lib/postgres";
 
 import { leerSesionActual } from "@/lib/auth";
 import { CODIGOS_DOLARES, separarMontoPorMoneda } from "@/lib/monedas";
+import { columnaFechaLimaSql, fechaActualLima, inicioMesActualLima } from "@/lib/fecha-lima";
 
 export const runtime = "nodejs";
 
@@ -167,18 +168,15 @@ const EXCLUYE_PDP = `
   )
 `;
 
+const FECHA_GESTION_LIMA = columnaFechaLimaSql("g.fecha_hora");
+
 function rangoMesActual(): {
   desde: string;
   hasta: string;
 } {
-  const hoy = new Date();
-
-  const inicio = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
-
   return {
-    desde: inicio.toISOString().slice(0, 10),
-
-    hasta: hoy.toISOString().slice(0, 10),
+    desde: inicioMesActualLima(),
+    hasta: fechaActualLima(),
   };
 }
 
@@ -209,7 +207,7 @@ export async function GET(request: NextRequest) {
         SELECT
           g.id::int AS id,
           g.fecha_hora,
-          g.usuario_gestor_oficina AS gestor,
+          c.gestor AS gestor,
           c.cliente,
           g.categoria,
           g.codigo_razon
@@ -218,10 +216,7 @@ export async function GET(request: NextRequest) {
 
         ${JOIN_CUENTA_REPRESENTATIVA}
 
-        WHERE LEFT(
-          g.fecha_hora,
-          10
-        ) BETWEEN $1 AND $2
+        WHERE ${FECHA_GESTION_LIMA} BETWEEN $1::date AND $2::date
 
         ${EXCLUYE_PDP}
 
@@ -236,12 +231,9 @@ export async function GET(request: NextRequest) {
   const detalle = await consultarFilas<FilaDetalle>(
     `
         SELECT
-          LEFT(
-            g.fecha_hora,
-            10
-          ) AS fecha,
+          TO_CHAR(${FECHA_GESTION_LIMA}, 'YYYY-MM-DD') AS fecha,
 
-          g.usuario_gestor_oficina AS gestor,
+          c.gestor AS gestor,
           c.funcionario,
           c.cliente,
           g.idc,
@@ -282,10 +274,7 @@ export async function GET(request: NextRequest) {
 
         ${JOIN_CUENTA_REPRESENTATIVA}
 
-        WHERE LEFT(
-          g.fecha_hora,
-          10
-        ) BETWEEN $1 AND $2
+        WHERE ${FECHA_GESTION_LIMA} BETWEEN $1::date AND $2::date
 
         ${EXCLUYE_PDP}
       `,
@@ -300,10 +289,7 @@ export async function GET(request: NextRequest) {
 
         FROM gestiones g
 
-        WHERE LEFT(
-          g.fecha_hora,
-          10
-        ) BETWEEN $1 AND $2
+        WHERE ${FECHA_GESTION_LIMA} BETWEEN $1::date AND $2::date
 
         ${EXCLUYE_PDP}
 
@@ -324,10 +310,7 @@ export async function GET(request: NextRequest) {
 
         FROM gestiones g
 
-        WHERE LEFT(
-          g.fecha_hora,
-          10
-        ) BETWEEN $1 AND $2
+        WHERE ${FECHA_GESTION_LIMA} BETWEEN $1::date AND $2::date
 
         ${EXCLUYE_PDP}
 
@@ -357,10 +340,7 @@ export async function GET(request: NextRequest) {
 
         ${JOIN_CUENTA_REPRESENTATIVA}
 
-        WHERE LEFT(
-          g.fecha_hora,
-          10
-        ) BETWEEN $1 AND $2
+        WHERE ${FECHA_GESTION_LIMA} BETWEEN $1::date AND $2::date
 
         ${EXCLUYE_PDP}
 
@@ -383,10 +363,7 @@ export async function GET(request: NextRequest) {
 
         ${JOIN_CUENTA_REPRESENTATIVA}
 
-        WHERE LEFT(
-          g.fecha_hora,
-          10
-        ) BETWEEN $1 AND $2
+        WHERE ${FECHA_GESTION_LIMA} BETWEEN $1::date AND $2::date
 
         AND c.tipo_juicio IS NOT NULL
 
@@ -415,10 +392,7 @@ export async function GET(request: NextRequest) {
 
         FROM gestiones g
 
-        WHERE LEFT(
-          g.fecha_hora,
-          10
-        ) BETWEEN $1 AND $2
+        WHERE ${FECHA_GESTION_LIMA} BETWEEN $1::date AND $2::date
 
         ${EXCLUYE_PDP}
       `,

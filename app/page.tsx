@@ -16,7 +16,7 @@
 
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSesion } from "@/components/SesionProvider";
 import { AnimatePresence, motion } from "framer-motion";
@@ -161,12 +161,46 @@ export default function Home() {
   const [filtroLista, setFiltroLista] = useState("");
 
   const { sesion, cargando: verificandoRol } = useSesion();
+  const claveUltimaBusqueda = sesion
+    ? `${CLAVE_ULTIMA_BUSQUEDA}_${sesion.userId}`
+    : CLAVE_ULTIMA_BUSQUEDA;
+  const clavePestanas = sesion
+    ? `${CLAVE_PESTANAS}_${sesion.userId}`
+    : CLAVE_PESTANAS;
 
   const [pestanas, setPestanas] = useState<PestanaCliente[]>([]);
 
   const [pestanaActiva, setPestanaActiva] = useState<string>("cuentas");
 
   const [pestanasCargadas, setPestanasCargadas] = useState(false);
+  const [carteraPropia, setCarteraPropia] = useState(false);
+
+  const cargarCarteraPropia = useCallback(async () => {
+    setCargando(true);
+    setErrorBusqueda(null);
+    setFiltroLista("");
+
+    try {
+      const res = await fetch("/api/buscar?cartera=propia", { cache: "no-store" });
+      const data = await res.json();
+
+      if (!res.ok) {
+        setCuentas([]);
+        setErrorBusqueda(data.error ?? "No se pudo cargar tu cartera.");
+        return;
+      }
+
+      const resultados = data.resultados ?? [];
+      setCuentas(resultados);
+      setUltimaBusqueda("Mi cartera");
+      setCarteraPropia(true);
+    } catch {
+      setCuentas([]);
+      setErrorBusqueda("No se pudo cargar tu cartera. Inténtalo de nuevo.");
+    } finally {
+      setCargando(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (verificandoRol) return;
@@ -181,16 +215,22 @@ export default function Home() {
     void Promise.resolve().then(() => {
       if (!activa) return;
 
-      const guardada = sessionStorage.getItem(CLAVE_ULTIMA_BUSQUEDA);
+      const guardada = sessionStorage.getItem(claveUltimaBusqueda);
+
+      sessionStorage.removeItem(CLAVE_ULTIMA_BUSQUEDA);
+      sessionStorage.removeItem(CLAVE_PESTANAS);
 
       if (guardada) {
-        const { texto, resultados } = JSON.parse(guardada);
+        const { texto, resultados, cartera } = JSON.parse(guardada);
 
         setUltimaBusqueda(texto);
         setCuentas(resultados);
+        setCarteraPropia(cartera === true);
+      } else if (sesion?.rol === "gestor") {
+        void cargarCarteraPropia();
       }
 
-      const pestanasGuardadas = sessionStorage.getItem(CLAVE_PESTANAS);
+      const pestanasGuardadas = sessionStorage.getItem(clavePestanas);
 
       if (pestanasGuardadas) {
         const { pestanas: p, activa } = JSON.parse(pestanasGuardadas);
@@ -205,7 +245,7 @@ export default function Home() {
     return () => {
       activa = false;
     };
-  }, [router, sesion, verificandoRol]);
+  }, [cargarCarteraPropia, clavePestanas, claveUltimaBusqueda, router, sesion, verificandoRol]);
 
   useEffect(() => {
     if (!pestanasCargadas) {
@@ -213,13 +253,13 @@ export default function Home() {
     }
 
     sessionStorage.setItem(
-      CLAVE_PESTANAS,
+      clavePestanas,
       JSON.stringify({
         pestanas,
         activa: pestanaActiva,
       }),
     );
-  }, [pestanas, pestanaActiva, pestanasCargadas]);
+  }, [clavePestanas, pestanas, pestanaActiva, pestanasCargadas]);
 
   async function buscar(texto: string) {
     if (!texto.trim()) return;
@@ -227,10 +267,13 @@ export default function Home() {
     setCargando(true);
     setErrorBusqueda(null);
     setUltimaBusqueda(texto);
+    setCarteraPropia(false);
     setFiltroLista("");
 
     try {
-      const res = await fetch("/api/buscar?q=" + encodeURIComponent(texto));
+      const res = await fetch("/api/buscar?q=" + encodeURIComponent(texto), {
+        cache: "no-store",
+      });
       const data = await res.json();
       if (!res.ok) {
         setCuentas([]);
@@ -241,7 +284,7 @@ export default function Home() {
       const resultados = data.resultados ?? [];
       setCuentas(resultados);
       sessionStorage.setItem(
-        CLAVE_ULTIMA_BUSQUEDA,
+        claveUltimaBusqueda,
         JSON.stringify({ texto, resultados }),
       );
     } catch {
@@ -254,13 +297,19 @@ export default function Home() {
 
   function refrescar() {
     if (ultimaBusqueda) {
-      buscar(ultimaBusqueda);
+      if (carteraPropia) {
+        void cargarCarteraPropia();
+      } else {
+        buscar(ultimaBusqueda);
+      }
     }
   }
 
   async function cerrarSesion() {
-    sessionStorage.removeItem(CLAVE_ULTIMA_BUSQUEDA);
+    sessionStorage.removeItem(claveUltimaBusqueda);
 
+    sessionStorage.removeItem(clavePestanas);
+    sessionStorage.removeItem(CLAVE_ULTIMA_BUSQUEDA);
     sessionStorage.removeItem(CLAVE_PESTANAS);
 
     await fetch("/api/logout", {
@@ -550,7 +599,7 @@ export default function Home() {
                             color: "var(--color-texto)",
                           }}
                         >
-                          Resultados
+                          {carteraPropia ? "Mi cartera" : "Resultados"}
                         </h2>
 
                         <ChevronDown
