@@ -12,7 +12,7 @@ COPY . .
 RUN NEXT_OUTPUT=standalone \
     DATABASE_URL=postgresql://build_only:build_only@127.0.0.1:1/build_only \
     JWT_SECRET=build-only-placeholder-never-used-for-runtime-sessions \
-    npm run build
+    npm run build -- --webpack
 
 FROM ${NODE_IMAGE} AS runtime
 WORKDIR /app
