@@ -1,46 +1,66 @@
-// instrumentation.node.ts
-// Instrumentación exclusiva para el runtime Node.js.
-//
-// Aquí vive el programador automático de respaldos
+import { diagnosticarErrorRespaldo } from "./lib/backup-error";
+
+const estadoGlobal = globalThis as typeof globalThis & {
+  __gestionOficinaBackupScheduler?: Promise<void>;
+};
 
 export async function registrarInstrumentacionNode() {
-    const cron = await import("node-cron");
+  if (estadoGlobal.__gestionOficinaBackupScheduler) {
+    return estadoGlobal.__gestionOficinaBackupScheduler;
+  }
 
-    const { crearRespaldoBaseDatos } = await import("./lib/backup");
-
-    const ZONA_HORARIA = "America/Lima";
-
-    const LUNES_5PM = "0 17 * * 1";
-    const JUEVES_5PM = "0 17 * * 4";
-
-    async function ejecutarRespaldoProgramado(etiqueta: string) {
-        console.log(
-            `[backup automático] Iniciando respaldo programado (${etiqueta})...`,
-        );
-
-        try {
-            const { nombre, tamanoMB } = await crearRespaldoBaseDatos();
-
-            console.log(
-                `[backup automático] Respaldo creado: ${nombre} (${tamanoMB} MB)`,
-            );
-        } catch (error) {
-            console.error(
-                `[backup automático] Error al crear el respaldo (${etiqueta}):`,
-                error,
-            );
-        }
+  const registro = registrarProgramador();
+  estadoGlobal.__gestionOficinaBackupScheduler = registro;
+  try {
+    await registro;
+  } catch (error) {
+    if (estadoGlobal.__gestionOficinaBackupScheduler === registro) {
+      delete estadoGlobal.__gestionOficinaBackupScheduler;
     }
+    throw error;
+  }
+}
 
-    cron.schedule(LUNES_5PM, () => ejecutarRespaldoProgramado("lunes 5pm"), {
-        timezone: ZONA_HORARIA,
-    });
+async function registrarProgramador() {
+  const cron = await import("node-cron");
+  const { crearRespaldoBaseDatos } = await import("./lib/backup");
+  const opciones = { timezone: "America/Lima", noOverlap: true };
 
-    cron.schedule(JUEVES_5PM, () => ejecutarRespaldoProgramado("jueves 5pm"), {
-        timezone: ZONA_HORARIA,
-    });
+  async function ejecutarRespaldoProgramado(etiqueta: string) {
+    console.log(`[backup automático] Iniciando respaldo programado (${etiqueta}).`);
 
-    console.log(
-        "[backup automático] Programador iniciado — respaldos automáticos los lunes y jueves a las 5:00pm (hora de Lima).",
-    );
+    try {
+      const resultado = await crearRespaldoBaseDatos();
+      if (resultado.copiaBlob.estado === "verificada") {
+        console.log(
+          `[backup automático] Respaldo local y copia Blob verificados: ${resultado.nombre} (${resultado.tamanoMB} MB).`,
+        );
+      } else {
+        console.error(
+          `[backup automático] Respaldo local verificado; copia Blob pendiente: ${resultado.nombre}.`,
+          {
+            codigo: resultado.copiaBlob.codigo,
+            estadoHttp: resultado.copiaBlob.estadoHttp,
+          },
+        );
+      }
+    } catch (error) {
+      const diagnostico = diagnosticarErrorRespaldo(error);
+      if (diagnostico.codigo === "BackupInProgress") {
+        console.log("[backup automático] Se omitió la ejecución; ya hay un respaldo en curso.");
+      } else {
+        console.error(
+          `[backup automático] No se pudo completar el respaldo (${etiqueta}).`,
+          diagnostico,
+        );
+      }
+    }
+  }
+
+  cron.schedule("0 17 * * 1", () => ejecutarRespaldoProgramado("lunes 5pm"), opciones);
+  cron.schedule("0 17 * * 4", () => ejecutarRespaldoProgramado("jueves 5pm"), opciones);
+
+  console.log(
+    "[backup automático] Programador iniciado; respaldos lunes y jueves a las 5:00 p. m. (hora de Lima).",
+  );
 }

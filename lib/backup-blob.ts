@@ -9,7 +9,6 @@ type ResultadoCopia = "copiado" | "existente";
 
 const URL_STORAGE = "https://stgestionescaillaux.blob.core.windows.net";
 const CONTENEDOR = "backups-postgresql";
-const cargasEnCurso = new Map<string, Promise<ResultadoCopia>>();
 let contenedor: ContainerClient | undefined;
 const clienteHttpIdentidad = createDefaultHttpClient();
 
@@ -51,8 +50,11 @@ function tieneCodigo(error: unknown, estado: number, ...codigos: string[]) {
   return codigos.includes(codigoServicio ?? error.code ?? "");
 }
 
-async function cargarRespaldo(ruta: string): Promise<ResultadoCopia> {
-  const cliente = obtenerContenedor().getBlockBlobClient(path.basename(ruta));
+async function cargarRespaldo(
+  ruta: string,
+  resolverContenedor: () => ContainerClient,
+): Promise<ResultadoCopia> {
+  const cliente = resolverContenedor().getBlockBlobClient(path.basename(ruta));
   const stats = await fs.stat(ruta);
   if (!stats.isFile() || stats.size === 0) {
     throw Object.assign(new Error("El respaldo no es un archivo válido."), {
@@ -110,14 +112,28 @@ async function cargarRespaldo(ruta: string): Promise<ResultadoCopia> {
   }
 }
 
-export function copiarRespaldoABlob(ruta: string): Promise<ResultadoCopia> {
-  const rutaAbsoluta = path.resolve(ruta);
-  const enCurso = cargasEnCurso.get(rutaAbsoluta);
-  if (enCurso) return enCurso;
+export function crearCopiadorRespaldoABlob(
+  resolverContenedor: () => ContainerClient,
+) {
+  const cargasEnCurso = new Map<string, Promise<ResultadoCopia>>();
 
-  const carga = cargarRespaldo(rutaAbsoluta).finally(() => {
-    cargasEnCurso.delete(rutaAbsoluta);
-  });
-  cargasEnCurso.set(rutaAbsoluta, carga);
-  return carga;
+  return function copiarRespaldo(ruta: string): Promise<ResultadoCopia> {
+    const rutaAbsoluta = path.resolve(ruta);
+    const enCurso = cargasEnCurso.get(rutaAbsoluta);
+    if (enCurso) return enCurso;
+
+    const carga = cargarRespaldo(rutaAbsoluta, resolverContenedor).finally(() => {
+      cargasEnCurso.delete(rutaAbsoluta);
+    });
+    cargasEnCurso.set(rutaAbsoluta, carga);
+    return carga;
+  };
 }
+
+const copiarRespaldoAzure = crearCopiadorRespaldoABlob(obtenerContenedor);
+
+export function copiarRespaldoABlob(ruta: string): Promise<ResultadoCopia> {
+  return copiarRespaldoAzure(ruta);
+}
+
+export type { ResultadoCopia };

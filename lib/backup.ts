@@ -1,91 +1,145 @@
-// lib/backup.ts
-//
-// Creación y rotación de respaldos PostgreSQL.
-//
-// Usa pg_dump en formato custom (.dump).
-// Conserva como máximo los 30 respaldos más recientes.
-
-import fs from "fs";
-import path from "path";
-import { execFile } from "child_process";
-import { promisify } from "util";
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { copiarRespaldoABlob } from "./backup-blob";
 
-const ejecutarArchivo = promisify(execFile);
+import { copiarRespaldoABlob, type ResultadoCopia } from "./backup-blob";
+import { diagnosticarErrorRespaldo } from "./backup-error";
+import {
+  crearRespaldoLocalValidado,
+  type EjecutarComandoRespaldo,
+} from "./backup-archivo";
+import { conBloqueoRespaldo } from "./backup-lock";
 
 const CARPETA_RESPALDOS = path.join(process.cwd(), "backups");
-
 const RESPALDOS_A_CONSERVAR = 30;
 
-function formatearFechaParaNombre(): string {
-  const ahora = new Date();
+export type ResultadoCopiaBlobRespaldo =
+  | { estado: "verificada"; resultado: ResultadoCopia }
+  | { estado: "pendiente"; codigo: string; estadoHttp?: number };
 
+export type ResultadoRespaldo = {
+  nombre: string;
+  tamanoMB: number;
+  localOk: true;
+  copiaBlob: ResultadoCopiaBlobRespaldo;
+};
+
+type EjecutarConBloqueo = <T>(
+  databaseUrl: string,
+  tarea: () => Promise<T>,
+) => Promise<T>;
+
+type DependenciasServicioRespaldo = {
+  databaseUrl: () => string | undefined;
+  carpetaRespaldos: string;
+  pgDump: string;
+  pgRestore: string;
+  ejecutar: EjecutarComandoRespaldo;
+  copiarABlob: (ruta: string) => Promise<ResultadoCopia>;
+  ejecutarConBloqueo: EjecutarConBloqueo;
+  crearNombre: () => string;
+  rotar: (carpeta: string, copiar: (ruta: string) => Promise<ResultadoCopia>) => Promise<void>;
+  carpetaTemporal: string;
+};
+
+function formatearFechaParaNombre() {
+  const ahora = new Date();
   const pad = (numero: number) => String(numero).padStart(2, "0");
 
   return [
     ahora.getFullYear(),
-
     "-",
-
     pad(ahora.getMonth() + 1),
-
     "-",
-
     pad(ahora.getDate()),
-
     "_",
-
     pad(ahora.getHours()),
-
     "-",
-
     pad(ahora.getMinutes()),
-
     "-",
-
     pad(ahora.getSeconds()),
   ].join("");
 }
 
-function obtenerConfiguracionPostgres() {
-  const databaseUrl = process.env.DATABASE_URL;
-
-  if (!databaseUrl) {
-    throw new Error("Falta DATABASE_URL. Revisa .env.local.");
-  }
-
+function obtenerConfiguracionPostgres(databaseUrl: string) {
   const url = new URL(databaseUrl);
-
   const baseDatos = url.pathname.replace(/^\//, "");
 
   if (!baseDatos) {
-    throw new Error("DATABASE_URL no contiene el nombre de la base de datos.");
+    throw Object.assign(
+      new Error("DATABASE_URL no contiene el nombre de la base de datos."),
+      { code: "InvalidDatabaseUrl" },
+    );
   }
 
-  const usuario = decodeURIComponent(url.username);
-
-  const password = decodeURIComponent(url.password);
-
-  const host = url.hostname;
-
-  const puerto = url.port || "5432";
-
   return {
-    host,
-    puerto,
-    usuario,
-    password,
+    host: url.hostname,
+    puerto: url.port || "5432",
+    usuario: decodeURIComponent(url.username),
+    password: decodeURIComponent(url.password),
     baseDatos,
-
     sslMode: url.searchParams.get("sslmode"),
   };
 }
 
-function listarArchivosDeRespaldo(carpeta = CARPETA_RESPALDOS) {
-  if (!fs.existsSync(carpeta)) {
-    return [];
+function crearEntornoBase() {
+  const entorno: NodeJS.ProcessEnv = {
+    NODE_ENV: process.env.NODE_ENV ?? "production",
+  };
+  const variablesPermitidas = [
+    "PATH",
+    "SYSTEMROOT",
+    "WINDIR",
+    "TEMP",
+    "TMP",
+    "PGSSLROOTCERT",
+    "PGSSLCERT",
+    "PGSSLKEY",
+    "PGSSLCRL",
+    "PGSSLCRLDIR",
+    "PGGSSENCMODE",
+  ];
+
+  for (const variable of variablesPermitidas) {
+    const valor = process.env[variable];
+    if (valor !== undefined) entorno[variable] = valor;
   }
+
+  return entorno;
+}
+
+function resolverPgRestore(pgDump: string) {
+  const configurado = process.env.PG_RESTORE_PATH?.trim();
+  if (configurado) return configurado;
+
+  const dumpConfigurado = process.env.PG_DUMP_PATH?.trim();
+  if (!dumpConfigurado) return "pg_restore";
+
+  const nombre = path.basename(pgDump);
+  const nombreRestore = nombre.replace(/^pg_dump(?=\.exe$|$)/i, "pg_restore");
+  if (nombreRestore === nombre) return "pg_restore";
+  return path.join(path.dirname(pgDump), nombreRestore);
+}
+
+function ejecutarComando(
+  ejecutable: string,
+  argumentos: string[],
+  entorno: NodeJS.ProcessEnv,
+): Promise<void> {
+  return new Promise((resolver, rechazar) => {
+    execFile(
+      ejecutable,
+      argumentos,
+      { env: entorno, windowsHide: true, maxBuffer: 16 * 1024 * 1024 },
+      (error) => (error ? rechazar(error) : resolver()),
+    );
+  });
+}
+
+function listarArchivosDeRespaldo(carpeta = CARPETA_RESPALDOS) {
+  if (!fs.existsSync(carpeta)) return [];
 
   return fs
     .readdirSync(carpeta)
@@ -95,16 +149,9 @@ function listarArchivosDeRespaldo(carpeta = CARPETA_RESPALDOS) {
     )
     .map((nombre) => {
       const ruta = path.join(carpeta, nombre);
-
       const stats = fs.lstatSync(ruta);
       if (!stats.isFile()) return null;
-
-      return {
-        nombre,
-        ruta,
-
-        fechaModificacion: stats.mtime.getTime(),
-      };
+      return { nombre, ruta, fechaModificacion: stats.mtime.getTime() };
     })
     .filter((archivo): archivo is NonNullable<typeof archivo> => archivo !== null)
     .sort((a, b) => b.fechaModificacion - a.fechaModificacion);
@@ -113,32 +160,23 @@ function listarArchivosDeRespaldo(carpeta = CARPETA_RESPALDOS) {
 export async function rotarRespaldosViejos(
   carpeta = CARPETA_RESPALDOS,
   conservar = RESPALDOS_A_CONSERVAR,
-  copiar = copiarRespaldoABlob,
+  copiar: (ruta: string) => Promise<ResultadoCopia> = copiarRespaldoABlob,
 ) {
   const archivos = listarArchivosDeRespaldo(carpeta);
+  if (archivos.length <= conservar) return;
 
-  if (archivos.length <= conservar) {
-    return;
-  }
-
-  const archivosAEliminar = archivos.slice(conservar);
-
-  for (const archivo of archivosAEliminar) {
+  for (const archivo of archivos.slice(conservar)) {
     try {
-      await copiar(archivo.ruta);
+      const resultado = await copiar(archivo.ruta);
+      if (resultado !== "copiado" && resultado !== "existente") {
+        throw Object.assign(new Error("No se verificó la copia remota."), {
+          code: "BlobVerificationFailed",
+        });
+      }
     } catch (error) {
-      const datos = error as { code?: unknown; statusCode?: unknown } | null;
-      const codigo = datos?.code;
-      const estado = datos?.statusCode;
       console.error(
         `[backup] Se conserva ${archivo.nombre}; no hay copia Blob verificada.`,
-        {
-          codigo:
-            typeof codigo === "string" && /^[a-zA-Z0-9_]{1,80}$/.test(codigo)
-              ? codigo
-              : "BlobUploadFailed",
-          estadoHttp: typeof estado === "number" ? estado : undefined,
-        },
+        diagnosticarErrorRespaldo(error),
       );
       continue;
     }
@@ -146,146 +184,121 @@ export async function rotarRespaldosViejos(
     try {
       fs.unlinkSync(archivo.ruta);
     } catch (error) {
-      console.error(`[backup] No se pudo rotar ${archivo.nombre}.`, {
-        codigo: (error as NodeJS.ErrnoException).code ?? "FileDeleteFailed",
-      });
+      console.error(`[backup] No se pudo rotar ${archivo.nombre}.`,
+        diagnosticarErrorRespaldo(error),
+      );
       continue;
     }
 
-    console.log(`[backup] Respaldo antiguo eliminado: ${archivo.nombre}`);
+    console.log(`[backup] Respaldo antiguo eliminado tras verificar Blob: ${archivo.nombre}`);
   }
 }
 
-export async function crearRespaldoBaseDatos(): Promise<{
-  nombre: string;
-  tamanoMB: number;
-}> {
-  if (!fs.existsSync(CARPETA_RESPALDOS)) {
-    fs.mkdirSync(CARPETA_RESPALDOS, {
-      recursive: true,
-      mode: 0o700,
-    });
-  }
-  const carpetaStats = fs.lstatSync(CARPETA_RESPALDOS);
-  if (!carpetaStats.isDirectory()) {
-    throw new Error("La carpeta de respaldos debe ser un directorio local seguro.");
-  }
+const dependenciasPredeterminadas: DependenciasServicioRespaldo = {
+  databaseUrl: () => process.env.DATABASE_URL,
+  carpetaRespaldos: CARPETA_RESPALDOS,
+  pgDump: process.env.PG_DUMP_PATH || "pg_dump",
+  pgRestore: resolverPgRestore(process.env.PG_DUMP_PATH || "pg_dump"),
+  ejecutar: ejecutarComando,
+  copiarABlob: copiarRespaldoABlob,
+  ejecutarConBloqueo: conBloqueoRespaldo,
+  crearNombre: () =>
+    `gestion-oficina_${formatearFechaParaNombre()}_${randomUUID()}.dump`,
+  rotar: (carpeta, copiar) =>
+    rotarRespaldosViejos(carpeta, RESPALDOS_A_CONSERVAR, copiar),
+  carpetaTemporal: os.tmpdir(),
+};
 
-  const { host, puerto, usuario, password, baseDatos, sslMode } =
-    obtenerConfiguracionPostgres();
-
-  const nombreArchivo = `gestion-oficina_${formatearFechaParaNombre()}_${randomUUID()}.dump`;
-
-  const rutaTemporal = path.join(CARPETA_RESPALDOS, `${nombreArchivo}.partial`);
-  const rutaDestino = path.join(CARPETA_RESPALDOS, nombreArchivo);
-  const descriptorTemporal = fs.openSync(rutaTemporal, "wx", 0o600);
-  fs.closeSync(descriptorTemporal);
-
-  /*
-   * Si PostgreSQL no está en PATH,
-   * podemos definir PG_DUMP_PATH en .env.local.
-   *
-   * Ejemplo:
-   *
-   * PG_DUMP_PATH=C:\Program Files\PostgreSQL\18\bin\pg_dump.exe
-   */
-
-  const pgDump = process.env.PG_DUMP_PATH || "pg_dump";
-
-  const argumentos = [
-    "--host",
-    host,
-
-    "--port",
-    puerto,
-
-    "--username",
-    usuario,
-
-    "--dbname",
-    baseDatos,
-
-    "--format=custom",
-
-    "--no-owner",
-
-    "--no-privileges",
-
-    "--file",
-    rutaTemporal,
-  ];
-
-  const entorno: NodeJS.ProcessEnv = {
-    ...process.env,
-
-    PGPASSWORD: password,
-  };
-
-  if (sslMode) {
-    entorno.PGSSLMODE = sslMode;
-  }
-
-  try {
-    await ejecutarArchivo(pgDump, argumentos, {
-      env: entorno,
-
-      windowsHide: true,
-    });
-  } catch (error) {
-    /*
-     * Si pg_dump alcanzó a crear un archivo
-     * incompleto, no lo dejamos como backup válido.
-     */
-
-    if (fs.existsSync(rutaTemporal)) {
-      fs.unlinkSync(rutaTemporal);
-    }
-
-    throw error;
-  }
-
-  if (!fs.existsSync(rutaTemporal)) {
-    throw new Error("pg_dump terminó sin crear el archivo de respaldo.");
-  }
-
-  const stats = fs.statSync(rutaTemporal);
-
-  if (stats.size === 0) {
-    fs.unlinkSync(rutaTemporal);
-
-    throw new Error("pg_dump generó un respaldo vacío.");
-  }
-
-  fs.chmodSync(rutaTemporal, 0o600);
-  fs.linkSync(rutaTemporal, rutaDestino);
-  fs.unlinkSync(rutaTemporal);
-  const statsFinales = fs.statSync(rutaDestino);
-
-  try {
-    const resultado = await copiarRespaldoABlob(rutaDestino);
-    console.log(`[backup Blob] ${nombreArchivo}: ${resultado}.`);
-  } catch (error) {
-    const datos = error as { code?: unknown; statusCode?: unknown } | null;
-    const codigoError = datos?.code ?? (error instanceof Error ? error.name : undefined);
-    const codigo =
-      typeof codigoError === "string" && /^[a-zA-Z0-9_]{1,80}$/.test(codigoError)
-        ? codigoError
-        : "BlobUploadFailed";
-    const estadoHttp =
-      typeof datos?.statusCode === "number" ? datos.statusCode : undefined;
-    console.error(
-      `[backup Blob] No se pudo copiar ${nombreArchivo}; el respaldo local se conserva.`,
-      { codigo, estadoHttp },
-    );
-  }
-
-  await rotarRespaldosViejos();
-
-  const tamanoMB = Number((statsFinales.size / (1024 * 1024)).toFixed(2));
+export function crearServicioDeRespaldos(
+  overrides: Partial<DependenciasServicioRespaldo> = {},
+) {
+  const dependencias = { ...dependenciasPredeterminadas, ...overrides };
 
   return {
-    nombre: nombreArchivo,
+    async crearRespaldoBaseDatos(): Promise<ResultadoRespaldo> {
+      const databaseUrl = dependencias.databaseUrl();
+      if (!databaseUrl) {
+        throw Object.assign(new Error("Falta DATABASE_URL."), {
+          code: "DatabaseUrlMissing",
+        });
+      }
 
-    tamanoMB,
+      const configuracion = obtenerConfiguracionPostgres(databaseUrl);
+
+      return dependencias.ejecutarConBloqueo(databaseUrl, async () => {
+        const entornoBase = crearEntornoBase();
+        const entornoPgDump: NodeJS.ProcessEnv = {
+          ...entornoBase,
+          PGPASSWORD: configuracion.password,
+          ...(configuracion.sslMode ? { PGSSLMODE: configuracion.sslMode } : {}),
+        };
+        const argumentosPgDump = [
+          "--host",
+          configuracion.host,
+          "--port",
+          configuracion.puerto,
+          "--username",
+          configuracion.usuario,
+          "--dbname",
+          configuracion.baseDatos,
+          "--no-owner",
+          "--no-privileges",
+        ];
+
+        const archivo = await crearRespaldoLocalValidado({
+          carpetaRespaldos: dependencias.carpetaRespaldos,
+          nombreArchivo: dependencias.crearNombre(),
+          pgDump: dependencias.pgDump,
+          pgRestore: dependencias.pgRestore,
+          argumentosPgDump,
+          entornoPgDump,
+          entornoPgRestore: entornoBase,
+          ejecutar: dependencias.ejecutar,
+          carpetaTemporal: dependencias.carpetaTemporal,
+        });
+
+        console.log(
+          `[backup] Respaldo local verificado: ${archivo.nombre} (${archivo.tamanoBytes} bytes).`,
+        );
+
+        let copiaBlob: ResultadoCopiaBlobRespaldo;
+        try {
+          const resultado = await dependencias.copiarABlob(archivo.ruta);
+          copiaBlob = { estado: "verificada", resultado };
+          console.log(`[backup Blob] Copia verificada: ${archivo.nombre} (${resultado}).`);
+        } catch (error) {
+          const diagnostico = diagnosticarErrorRespaldo(error);
+          copiaBlob = { estado: "pendiente", ...diagnostico };
+          console.error(
+            `[backup Blob] Copia pendiente; se conserva el respaldo local ${archivo.nombre}.`,
+            diagnostico,
+          );
+        }
+
+        try {
+          await dependencias.rotar(
+            dependencias.carpetaRespaldos,
+            dependencias.copiarABlob,
+          );
+        } catch (error) {
+          console.error("[backup] No se pudo completar la rotación de respaldos.",
+            diagnosticarErrorRespaldo(error),
+          );
+        }
+
+        return {
+          nombre: archivo.nombre,
+          tamanoMB: Number((archivo.tamanoBytes / (1024 * 1024)).toFixed(2)),
+          localOk: true,
+          copiaBlob,
+        };
+      });
+    },
   };
+}
+
+const servicioPredeterminado = crearServicioDeRespaldos();
+
+export async function crearRespaldoBaseDatos() {
+  return servicioPredeterminado.crearRespaldoBaseDatos();
 }

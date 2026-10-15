@@ -59,17 +59,29 @@ export default function BackupsPage() {
     setMensaje(null);
     setError(null);
 
-    const res = await fetch("/api/admin/backups", { method: "POST" });
-    const data = await res.json();
+    try {
+      const res = await fetch("/api/admin/backups", { method: "POST" });
+      const data = await res.json();
 
-    setCreando(false);
+      if (data.localOk) {
+        setMensaje(
+          `Respaldo local creado y validado: ${data.nombre} (${data.tamanoMB} MB).`,
+        );
+        if (!data.blobOk) {
+          setError(
+            "Azure Blob no confirmó la copia. El respaldo local se conserva; puedes volver a intentar con «Recuperar en Azure Blob».",
+          );
+        }
+        setCargando(true);
+        cargarRespaldos();
+        return;
+      }
 
-    if (res.ok) {
-      setMensaje(`Respaldo creado: ${data.nombre} (${data.tamanoMB} MB)`);
-      setCargando(true);
-      cargarRespaldos();
-    } else {
       setError(data.error ?? "No se pudo crear el respaldo.");
+    } catch {
+      setError("No se pudo crear el respaldo.");
+    } finally {
+      setCreando(false);
     }
   }
 
