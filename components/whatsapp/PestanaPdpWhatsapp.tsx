@@ -26,6 +26,7 @@ import {
 import type { ClienteWhatsapp } from "./FilaClienteWhatsapp";
 import type { CampanaGuardadaWhatsapp } from "@/lib/whatsapp/campanas";
 import type { FiltroSeguimientoWhatsapp } from "@/lib/whatsapp/seguimiento";
+import { validarContactoGestorPlantilla } from "@/lib/whatsapp/plantillas";
 import {
   obtenerPlantillaPdp,
   obtenerSaludoGestorPdp,
@@ -299,6 +300,15 @@ export default function PestanaPdpWhatsapp() {
     mensajeBase: tenor,
     mensajesIndividuales,
     generarMensajeCliente,
+    validarPlantillaCliente: (cliente, plantilla, mensaje) => {
+      const gestorAsignado = clientePdp(cliente).gestor ?? "";
+      return validarContactoGestorPlantilla(
+        plantilla,
+        mensaje,
+        telefonos.obtenerNumeroContactoGestor(gestorAsignado),
+        gestorAsignado,
+      );
+    },
     setClientesPreparados,
     setMensajesIndividuales,
     setMensajeBaseOriginal: () => {},
@@ -641,7 +651,9 @@ export default function PestanaPdpWhatsapp() {
         preparados={campana.preparados}
         sinTelefono={campana.sinTelefono}
         fallidos={campana.fallidos}
-        preparando={campana.preparando || campana.enviandoCampana}
+        inciertos={campana.inciertos}
+        preparando={campana.preparando}
+        enviando={campana.enviandoCampana}
         onCerrar={() => setEstadoAbierto(false)}
       />
       <RevisionEnvioWhatsapp

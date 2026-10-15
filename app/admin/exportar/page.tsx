@@ -16,6 +16,10 @@ import {
   Table2,
 } from "lucide-react";
 import HeaderPanelAdmin from "@/components/HeaderPanelAdmin";
+import {
+  fechaHoraLimaAInstante,
+  formatearFechaHoraLima,
+} from "@/lib/fecha-lima";
 
 type FilaCompleta = {
   fecha_hora: string;
@@ -78,21 +82,15 @@ function formatearCelda(valor: unknown, clave: string): string {
   if (valor === null || valor === undefined || valor === "") return "";
 
   if (clave === "fecha_hora" && typeof valor === "string") {
-    const date = new Date(valor);
-    if (!isNaN(date.getTime())) {
-      return new Intl.DateTimeFormat("en-CA", {
-        timeZone: "America/Lima",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hour12: false,
-      })
-        .format(date)
-        .replace(", ", " ");
-    }
+    return formatearFechaHoraLima(valor, {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
   }
 
   if (typeof valor === "number") return valor.toLocaleString("es-PE");
@@ -101,7 +99,8 @@ function formatearCelda(valor: unknown, clave: string): string {
 
 function formatearTiempoRelativo(iso: string): string {
   const ahora = new Date().getTime();
-  const fecha = new Date(iso).getTime();
+  const fecha = fechaHoraLimaAInstante(iso)?.getTime();
+  if (fecha === undefined) return "Fecha no disponible";
   const diferenciaMinutos = Math.floor((ahora - fecha) / (1000 * 60));
 
   if (diferenciaMinutos < 1) return "Hace un momento";
@@ -168,7 +167,6 @@ export default function ExportarAdminPage() {
     useState<UltimaExportacion | null>(null);
 
   function cargarVistaPrevia() {
-    setCargando(true);
     fetch("/api/exportar/vista-previa", { cache: "no-store" })
       .then((res) => res.json())
       .then((data) => {

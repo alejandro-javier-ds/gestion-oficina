@@ -36,7 +36,10 @@ import {
   celularesActivosWhatsapp,
   type FiltroSeguimientoWhatsapp,
 } from "@/lib/whatsapp/seguimiento";
-import { obtenerPlantilla } from "@/lib/whatsapp/plantillas";
+import {
+  obtenerPlantilla,
+  validarContactoGestorPlantilla,
+} from "@/lib/whatsapp/plantillas";
 import { useWhatsappClientes } from "@/hooks/useWhatsappClientes";
 import { useWhatsappSeleccion } from "@/hooks/useWhatsappSeleccion";
 import { useWhatsappTelefonos } from "@/hooks/useWhatsappTelefonos";
@@ -150,6 +153,15 @@ export default function WhatsappPage() {
     mensajeBase: mensajes.mensajeBase,
     mensajesIndividuales: mensajes.mensajesIndividuales,
     generarMensajeCliente: mensajes.generarMensajeCliente,
+    validarPlantillaCliente: (cliente, plantilla, mensaje) => {
+      const gestorAsignado = cliente.gestor ?? "";
+      return validarContactoGestorPlantilla(
+        plantilla,
+        mensaje,
+        telefonos.obtenerNumeroContactoGestor(gestorAsignado),
+        gestorAsignado,
+      );
+    },
     setClientesPreparados: mensajes.establecerClientesPreparados,
     setMensajesIndividuales: mensajes.establecerMensajesIndividuales,
     setMensajeBaseOriginal: mensajes.establecerMensajeBaseOriginal,
@@ -502,7 +514,9 @@ export default function WhatsappPage() {
         preparados={campana.preparados}
         sinTelefono={campana.sinTelefono}
         fallidos={campana.fallidos}
-        preparando={campana.preparando || campana.enviandoCampana}
+        inciertos={campana.inciertos}
+        preparando={campana.preparando}
+        enviando={campana.enviandoCampana}
         onCerrar={() => setEstadoAbierto(false)}
       />
       {clienteVista && !revisionAbierta && (

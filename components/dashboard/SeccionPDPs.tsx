@@ -3,7 +3,7 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Search, Pencil, Trash2 } from "lucide-react";
 import { useSesion } from "@/components/SesionProvider";
@@ -15,7 +15,10 @@ import SelectorRangoFecha, {
   type RangoFecha,
 } from "./SelectorRangoFecha";
 import ModalEditarPromesa, { PromesaParaEditar } from "../ModalEditarPromesa";
-import { formatearFechaCalendarioLima } from "@/lib/fecha-lima";
+import {
+  fechaHoraLimaAInstante,
+  formatearFechaCalendarioLima,
+} from "@/lib/fecha-lima";
 
 type FilaFeed = {
   id: number;
@@ -138,7 +141,9 @@ const MEDIDAS = [
 ];
 
 function tiempoTranscurrido(iso: string): string {
-  const diffMs = Date.now() - new Date(iso).getTime();
+  const fecha = fechaHoraLimaAInstante(iso);
+  if (!fecha) return "Fecha no disponible";
+  const diffMs = Date.now() - fecha.getTime();
   const minutos = Math.floor(diffMs / 60000);
   if (minutos < 60) return `Hace ${minutos} min`;
   const horas = Math.floor(minutos / 60);
@@ -487,17 +492,20 @@ export default function SeccionPDPs() {
   const [promesaEditando, setPromesaEditando] =
     useState<PromesaParaEditar | null>(null);
 
-  function cargarDatos() {
-    setCargando(true);
-    fetch(`/api/dashboard/pdps?desde=${rango.desde}&hasta=${rango.hasta}`)
+  const cargarDatos = useCallback(() => {
+    void Promise.resolve()
+      .then(() => {
+        setCargando(true);
+        return fetch(`/api/dashboard/pdps?desde=${rango.desde}&hasta=${rango.hasta}`);
+      })
       .then((res) => res.json())
       .then(setDatos)
       .finally(() => setCargando(false));
-  }
+  }, [rango]);
 
   useEffect(() => {
     cargarDatos();
-  }, [rango]);
+  }, [cargarDatos]);
 
   function abrirDesdeFeed(f: FilaFeed) {
     setPromesaEditando({

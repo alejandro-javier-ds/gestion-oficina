@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { enviarUnMensajeWhatsapp as enviarLocal, type ResultadoEnvioWhatsapp } from "./envio-local";
 import { operarWhatsappRemoto, whatsappRemoto, normalizarNumeroWhatsapp, type ActorWhatsapp } from "./playwright";
+import { esErrorRemotoPrevioAlEnvio } from "./confirmacion-envio";
 
 export type { ResultadoEnvioWhatsapp } from "./envio-local";
 export function identificadorEnvioWhatsapp(campanaId: number, destinatarioId: number) {
@@ -15,8 +16,21 @@ export async function enviarUnMensajeWhatsapp(numeroSalida: string, destino: str
     const resultado = await operarWhatsappRemoto<Omit<ResultadoEnvioWhatsapp, "mensaje">>("enviar", normalizarNumeroWhatsapp(numeroSalida),
       { destino: normalizarNumeroWhatsapp(destino), mensaje: mensaje.trim(), idEnvio, leaseId }, actor);
     return { ...resultado, mensaje: mensaje.trim() };
-  } catch {
+  } catch (error) {
+    const codigo =
+      typeof error === "object" && error !== null && "codigo" in error
+        ? String(error.codigo)
+        : undefined;
+    const status =
+      typeof error === "object" && error !== null && "status" in error
+        ? Number(error.status)
+        : undefined;
+    const estado = esErrorRemotoPrevioAlEnvio(codigo, status)
+      ? "ERROR"
+      : "INCIERTO";
     return { ok: false, numeroSalida: normalizarNumeroWhatsapp(numeroSalida), telefonoDestino: normalizarNumeroWhatsapp(destino), mensaje: mensaje.trim(),
-      estado: "ERROR", detalle: "Resultado remoto no confirmado. No reintentar automáticamente; revisa WhatsApp y el registro del servicio antes de otro envío.", duracionMs: 0 };
+      estado, detalle: estado === "ERROR"
+        ? "El servicio rechazó el envío antes de iniciarlo."
+        : "El resultado remoto no se confirmó. El mensaje pudo enviarse; no se reintentará automáticamente.", duracionMs: 0 };
   }
 }

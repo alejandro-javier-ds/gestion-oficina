@@ -4,7 +4,7 @@
 
 "use client";
 
-import { CheckCircle2, Clock3, Loader2, Send, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock3, Loader2, Send, XCircle } from "lucide-react";
 
 type Props = {
   abierto: boolean;
@@ -16,6 +16,7 @@ type Props = {
   preparados: number;
   sinTelefono: number;
   fallidos: number;
+  inciertos: number;
   preparando: boolean;
   enviando?: boolean;
   onCerrar: () => void;
@@ -31,6 +32,7 @@ export default function EstadoEnvioWhatsapp({
   preparados,
   sinTelefono,
   fallidos,
+  inciertos,
   preparando,
   enviando = false,
   onCerrar,
@@ -186,7 +188,7 @@ export default function EstadoEnvioWhatsapp({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
             <div
               className="rounded-lg p-3"
               style={{
@@ -294,6 +296,26 @@ export default function EstadoEnvioWhatsapp({
                 Con problemas
               </p>
             </div>
+
+            <div
+              className="rounded-lg p-3"
+              style={{ background: "var(--color-fondo-sutil)" }}
+            >
+              <AlertTriangle
+                size={16}
+                style={{
+                  color: inciertos
+                    ? "var(--color-alerta)"
+                    : "var(--color-texto-suave)",
+                }}
+              />
+              <p className="mt-2 text-lg font-semibold dato-numerico">
+                {inciertos}
+              </p>
+              <p className="text-xs" style={{ color: "var(--color-texto-suave)" }}>
+                Por verificar
+              </p>
+            </div>
           </div>
 
           {preparando && (
@@ -352,6 +374,19 @@ export default function EstadoEnvioWhatsapp({
               {fallidos} registro
               {fallidos === 1 ? "" : "s"} presentó un error durante la
               preparación o el envío.
+            </div>
+          )}
+
+          {!enProceso && inciertos > 0 && (
+            <div
+              className="rounded-lg p-3 text-xs"
+              style={{
+                background: "var(--color-alerta-suave)",
+                color: "var(--color-alerta)",
+              }}
+            >
+              {inciertos} resultado{inciertos === 1 ? "" : "s"} no se pudo
+              confirmar. Revisa el historial antes de volver a enviar.
             </div>
           )}
 

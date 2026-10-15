@@ -24,7 +24,7 @@ export function crearRegistroEnvios(carpeta, enviar) {
       if (existente) {
         if (existente.hash !== hash || existente.userId !== actor.userId) throw new ErrorRemotoWhatsapp("ENVIO_CONFLICTO", "Identificador de envío ocupado.", 409);
         if (existente.estado === "final" && existente.resultado) return existente.resultado;
-        return { ok: false, numeroSalida: entrada.numero, telefonoDestino: destino, estado: "ERROR", duracionMs: 0,
+        return { ok: false, numeroSalida: entrada.numero, telefonoDestino: destino, estado: "INCIERTO", duracionMs: 0,
           detalle: "Resultado remoto incierto tras una interrupción. No reintentar automáticamente; verifica WhatsApp antes de otro envío." };
       }
       const intento = { v: 1, hash, userId: actor.userId, estado: "pendiente", fecha: new Date().toISOString() };
@@ -35,11 +35,12 @@ export function crearRegistroEnvios(carpeta, enviar) {
       let resultado;
       try {
         const respuesta = await enviar(entrada.numero, destino, mensaje);
-        const { mensaje: _mensaje, ...seguro } = respuesta;
+        const seguro = { ...respuesta };
+        delete seguro.mensaje;
         resultado = seguro;
       } catch {
-        resultado = { ok: false, numeroSalida: entrada.numero, telefonoDestino: destino, estado: "ERROR", duracionMs: 0,
-          detalle: "El servicio no confirmó el envío. No reintentar automáticamente; verifica WhatsApp antes de otro envío." };
+        resultado = { ok: false, numeroSalida: entrada.numero, telefonoDestino: destino, estado: "INCIERTO", duracionMs: 0,
+          detalle: "El servicio no confirmó el resultado del envío. No reintentar automáticamente; verifica WhatsApp antes de otro envío." };
       }
       await escribirAtomico(archivo, { ...intento, estado: "final", resultado });
       return resultado;

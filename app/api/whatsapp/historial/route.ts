@@ -37,6 +37,7 @@ type CampanaWhatsapp = {
   total_sin_telefono: number;
   total_fallidos: number;
   total_enviados: number;
+  total_inciertos: number;
   estado: string;
 };
 
@@ -162,6 +163,13 @@ export async function GET(request: NextRequest) {
 
               total_enviados::int
                 AS total_enviados,
+
+              (
+                SELECT COUNT(*)::int
+                FROM whatsapp_campana_destinatarios d
+                WHERE d.campana_id = whatsapp_campanas.id
+                  AND d.estado = 'INCIERTO'
+              ) AS total_inciertos,
 
               estado
 
@@ -314,6 +322,13 @@ export async function GET(request: NextRequest) {
 
             total_enviados::int
               AS total_enviados,
+
+            (
+              SELECT COUNT(*)::int
+              FROM whatsapp_campana_destinatarios d
+              WHERE d.campana_id = whatsapp_campanas.id
+                AND d.estado = 'INCIERTO'
+            ) AS total_inciertos,
 
             estado
 

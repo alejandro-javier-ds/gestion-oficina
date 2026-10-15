@@ -139,7 +139,7 @@ export function ControlSeguimientoWhatsapp({
             <option value="COMPLETADO">Completados</option>
             <option value="PARCIAL">Parciales</option>
             <option value="PENDIENTE">Pendientes</option>
-            <option value="REVISAR">Con errores</option>
+            <option value="REVISAR">Con errores o por verificar</option>
             <option value="SIN_EXITO">Números sin envío exitoso</option>
           </select>
         </label>

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ClienteWhatsapp } from "@/components/whatsapp/FilaClienteWhatsapp";
 import { destinosElegidosWhatsapp } from "@/lib/whatsapp/seguimiento";
-import { obtenerPlantilla } from "@/lib/whatsapp/plantillas";
+import { obtenerPlantilla, tieneVariables } from "@/lib/whatsapp/plantillas";
 import type { PropuestaId } from "@/components/whatsapp/CampanasWhatsapp";
 import type { MetadataWhatsappSeleccion } from "./useWhatsappSeleccion";
 import {
@@ -48,6 +48,11 @@ type Props = {
   nombreCampanaGuardada?: string;
   resolverClientes?: () => Promise<ClienteWhatsapp[]>;
   plantillaCliente?: (cliente: ClienteWhatsapp) => string;
+  validarPlantillaCliente?: (
+    cliente: ClienteWhatsapp,
+    plantilla: string,
+    mensaje: string,
+  ) => string | null;
   adaptarClientesGuardados?: (clientes: ClienteWhatsapp[]) => ClienteWhatsapp[];
   onGuardada?: (id: number) => void;
   onFinalizar?: () => void;
@@ -63,6 +68,7 @@ export function useWhatsappCampana(props: Props) {
     preparados: 0,
     sinTelefono: 0,
     fallidos: 0,
+    inciertos: 0,
   });
   const [borrador, setBorrador] = useState<ClienteWhatsapp[]>([]);
   const [errorCampana, setErrorCampana] = useState("");
@@ -75,6 +81,9 @@ export function useWhatsappCampana(props: Props) {
     telefonosManuales,
     mensajesIndividuales,
     obtenerMetadata,
+    plantillaCliente,
+    mensajeBase,
+    validarPlantillaCliente,
   } = props;
   const seleccionActual = useMemo(() => {
     const destinos: Destino[] = [];
@@ -98,10 +107,26 @@ export function useWhatsappCampana(props: Props) {
           advertencias.fallidos ||=
             estado?.estado === "FALLIDO" || !!estado?.requiereReintento;
           advertencias.inciertos ||= !!estado?.resultadosAnterioresInciertos;
+          const propuesta = obtenerMetadata(cliente.id)?.campana;
+          const plantilla =
+            plantillaCliente?.(cliente) ??
+            (propuesta
+              ? obtenerPlantilla(propuesta as PropuestaId)
+              : mensajeBase);
           const mensaje = mensajesIndividuales[cliente.id] ?? "";
           if (!mensaje.trim())
             throw new Error(
               "Completa el mensaje de cada cliente antes de confirmar.",
+            );
+          const errorPlantilla = validarPlantillaCliente?.(
+            cliente,
+            plantilla,
+            mensaje,
+          );
+          if (errorPlantilla) throw new Error(errorPlantilla);
+          if (tieneVariables(mensaje))
+            throw new Error(
+              "El mensaje contiene variables sin completar. Corrígelo antes de continuar.",
             );
           destinos.push({
             idc: cliente.idc,
@@ -133,13 +158,16 @@ export function useWhatsappCampana(props: Props) {
     telefonosManuales,
     mensajesIndividuales,
     obtenerMetadata,
+    plantillaCliente,
+    mensajeBase,
+    validarPlantillaCliente,
   ]);
   const reiniciarEstadoCampana = useCallback(() => {
     setCampanaId(null);
     setVersionSeleccion(null);
     setPreparando(false);
     setProcesados(0);
-    setContadores({ preparados: 0, sinTelefono: 0, fallidos: 0 });
+    setContadores({ preparados: 0, sinTelefono: 0, fallidos: 0, inciertos: 0 });
     setBorrador([]);
     setErrorCampana("");
     setConfirmaciones(SIN_CONFIRMACIONES_WHATSAPP);
@@ -162,8 +190,9 @@ export function useWhatsappCampana(props: Props) {
           preparados: Number(data.preparados ?? 0),
           sinTelefono: Number(data.sinTelefono ?? 0),
           fallidos: Number(data.fallidos ?? 0),
+          inciertos: Number(data.inciertos ?? 0),
         });
-        if (["ENVIADA", "ENVIADA_CON_ERRORES", "ERROR"].includes(data.estado))
+        if (["ENVIADA", "ENVIADA_CON_ERRORES", "ERROR", "REQUIERE_REVISION"].includes(data.estado))
           return;
       } catch {
         if (controller.signal.aborted) return;
@@ -264,6 +293,16 @@ export function useWhatsappCampana(props: Props) {
         mensajes[c.id] =
           props.mensajesIndividuales[c.id] ??
           props.generarMensajeCliente(c, plantilla);
+        const errorPlantilla = props.validarPlantillaCliente?.(
+          c,
+          plantilla,
+          mensajes[c.id],
+        );
+        if (errorPlantilla) throw new Error(errorPlantilla);
+        if (tieneVariables(mensajes[c.id]))
+          throw new Error(
+            "El mensaje contiene variables sin completar. Corrígelo antes de continuar.",
+          );
       }
       if (!total)
         throw new Error(
@@ -274,7 +313,7 @@ export function useWhatsappCampana(props: Props) {
       props.setMensajesIndividuales(mensajes);
       props.setMensajeBaseOriginal(props.mensajeBase);
       props.setClienteRevision(elegidos[0] ?? null);
-      setContadores({ preparados: total, sinTelefono: 0, fallidos: 0 });
+      setContadores({ preparados: total, sinTelefono: 0, fallidos: 0, inciertos: 0 });
       setProcesados(elegidos.length);
       setConfirmaciones(SIN_CONFIRMACIONES_WHATSAPP);
       props.setRevisionAbierta(true);
@@ -406,8 +445,21 @@ export function useWhatsappCampana(props: Props) {
           }),
         });
         const data = await r.json();
+        setProcesados(Number(data.procesados ?? 0));
+        setContadores({
+          preparados: Number(data.preparados ?? 0),
+          sinTelefono: Number(data.sinTelefono ?? 0),
+          fallidos: Number(data.fallidos ?? 0),
+          inciertos: Number(data.inciertos ?? 0),
+        });
         if (!r.ok)
           throw new Error(data.error ?? "No se pudo enviar la campaña.");
+        if (data.estado === "REQUIERE_REVISION" || Number(data.inciertos) > 0)
+          fallo(
+            new Error(
+              "La campaña terminó con resultados inciertos. Verifica cada teléfono en el historial antes de volver a preparar un envío.",
+            ),
+          );
       }
       props.setRevisionAbierta(false);
       props.setClienteRevision(null);
@@ -432,6 +484,7 @@ export function useWhatsappCampana(props: Props) {
         : contadores.preparados,
     sinTelefono: contadores.sinTelefono,
     fallidos: contadores.fallidos,
+    inciertos: contadores.inciertos,
     prepararEnvio,
     confirmarCampaña,
     revisarCampanaGuardada,

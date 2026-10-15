@@ -58,6 +58,32 @@ function quitarHora(opciones: Intl.DateTimeFormatOptions): Intl.DateTimeFormatOp
   return resultado;
 }
 
+function leerInstante(valor: string): Date | null {
+  const texto = valor.trim();
+  const conZona = /(?:Z|[+-]\d{2}(?::?\d{2})?)$/i.test(texto);
+  if (conZona) {
+    const fecha = new Date(texto);
+    return Number.isNaN(fecha.getTime()) ? null : fecha;
+  }
+
+  const partes = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3})\d*)?)?$/.exec(texto);
+  if (!partes) return null;
+
+  const [, anioTexto, mesTexto, diaTexto, horaTexto, minutoTexto, segundoTexto = "0", milisegundoTexto = "0"] = partes;
+  const anio = Number(anioTexto);
+  const mes = Number(mesTexto);
+  const dia = Number(diaTexto);
+  const hora = Number(horaTexto);
+  const minuto = Number(minutoTexto);
+  const segundo = Number(segundoTexto);
+  const milisegundo = Number(milisegundoTexto.padEnd(3, "0"));
+  const calendario = leerFechaCalendario(`${anioTexto}-${mesTexto}-${diaTexto}`);
+
+  if (!calendario || hora > 23 || minuto > 59 || segundo > 59) return null;
+
+  return new Date(Date.UTC(anio, mes - 1, dia, hora + 5, minuto, segundo, milisegundo));
+}
+
 export function sumarDiasCalendario(valor: string, dias: number): string {
   const fecha = leerFechaCalendario(valor);
 
@@ -96,9 +122,9 @@ export function formatearFechaLima(
     return formatearFechaCalendarioLima(valor, quitarHora(opciones));
   }
 
-  const fecha = new Date(valor);
+  const fecha = leerInstante(valor);
 
-  if (Number.isNaN(fecha.getTime())) return valor;
+  if (!fecha) return valor;
 
   return new Intl.DateTimeFormat("es-PE", {
     timeZone: "America/Lima",
@@ -111,6 +137,12 @@ export function formatearFechaHoraLima(
   opciones: Intl.DateTimeFormatOptions = OPCIONES_FECHA_HORA_CORTA,
 ): string {
   return formatearFechaLima(valor, opciones);
+}
+
+export function fechaHoraLimaAInstante(valor: string | null): Date | null {
+  if (!valor) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(valor.trim())) return leerFechaCalendario(valor);
+  return leerInstante(valor);
 }
 
 export function fechaActualLima(fecha = new Date()): string {
@@ -127,5 +159,7 @@ export function columnaFechaLimaSql(columna: string): string {
   if (!/^(?:[a-z_][a-z0-9_]*\.)?[a-z_][a-z0-9_]*$/i.test(columna)) {
     throw new Error("Columna de fecha SQL no válida.");
   }
-  return `(${columna}::timestamptz AT TIME ZONE 'America/Lima')::date`;
+  const texto = `(${columna})::text`;
+  const fechaConZona = "^[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}(:[0-9]{2}([.][0-9]+)?)?([Zz]|[+-][0-9]{2}(:?[0-9]{2})?)$";
+  return `(CASE WHEN ${texto} ~ '${fechaConZona}' THEN (${columna}::timestamptz AT TIME ZONE 'America/Lima') ELSE ${columna}::timestamp END)::date`;
 }

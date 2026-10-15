@@ -6,7 +6,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { consultarFilas, consultarUno } from "@/lib/postgres";
 import { leerSesionActual } from "@/lib/auth";
 import { CODIGOS_DOLARES, separarMontoPorMoneda } from "@/lib/monedas";
-import { columnaFechaLimaSql, fechaActualLima, inicioMesActualLima } from "@/lib/fecha-lima";
+import {
+  columnaFechaLimaSql,
+  fechaActualLima,
+  formatearFechaHoraLima,
+  inicioMesActualLima,
+} from "@/lib/fecha-lima";
 
 export const runtime = "nodejs";
 
@@ -76,26 +81,6 @@ function rangoMesActual(): {
     desde: inicioMesActualLima(),
     hasta: fechaActualLima(),
   };
-}
-
-function formatearFechaHoraLima(iso: string): string {
-  const fecha = new Date(iso);
-
-  if (Number.isNaN(fecha.getTime())) {
-    return iso;
-  }
-
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Lima",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  })
-    .format(fecha)
-    .replace(", ", " ");
 }
 
 function obtenerHoyLima(): string {

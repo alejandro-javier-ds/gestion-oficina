@@ -12,7 +12,11 @@ import ExcelJS from "exceljs";
 import { consultarFilas, ejecutar } from "@/lib/postgres";
 
 import { requerirAccesoApi } from "@/lib/api-acceso";
-import { columnaFechaLimaSql, fechaActualLima } from "@/lib/fecha-lima";
+import {
+  columnaFechaLimaSql,
+  fechaActualLima,
+  formatearFechaHoraLima,
+} from "@/lib/fecha-lima";
 import { valorMonetarioExcel } from "@/lib/exportacion-monetaria";
 
 export const runtime = "nodejs";
@@ -215,32 +219,6 @@ function estiloEncabezado(): Partial<ExcelJS.Style> {
   };
 }
 
-function formatearFechaHoraLima(iso: string): string {
-  const fecha = new Date(iso);
-
-  if (isNaN(fecha.getTime())) {
-    return iso;
-  }
-
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Lima",
-
-    year: "numeric",
-
-    month: "2-digit",
-
-    day: "2-digit",
-
-    hour: "2-digit",
-
-    minute: "2-digit",
-
-    hour12: false,
-  })
-    .format(fecha)
-    .replace(", ", " ");
-}
-
 function construirHoja(
   libro: ExcelJS.Workbook,
 
@@ -252,7 +230,7 @@ function construirHoja(
     width: number;
   }[],
 
-  filas: Record<string, any>[],
+  filas: ExcelJS.RowValues[],
 ) {
   const hoja = libro.addWorksheet(nombreHoja, {
     views: [

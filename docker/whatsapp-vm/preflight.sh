@@ -4,11 +4,18 @@ test -n "${WHATSAPP_DATA_UUID:-}"
 test "$(findmnt --noheadings --raw --mountpoint /srv/whatsapp-data --output FSTYPE)" = ext4
 test "$(findmnt --noheadings --raw --mountpoint /srv/whatsapp-data --output UUID)" = "$WHATSAPP_DATA_UUID"
 test -d /srv/whatsapp-data/whatsapp-sessions/.temporales
-test -d /run/whatsapp-worker
 test ! -L /run/whatsapp-worker
+if [ ! -d /run/whatsapp-worker ]; then
+  install -d -o 999 -g 988 -m 0700 /run/whatsapp-worker
+fi
+chown 999:988 /run/whatsapp-worker
+chmod 0700 /run/whatsapp-worker
+test "$(stat -c '%u:%g:%a' /run/whatsapp-worker)" = "999:988:700"
+test "$(id -u whatsappsvc)" = 999
+test "$(id -g whatsappsvc)" = 988
+runuser -u whatsappsvc -- test -w /run/whatsapp-worker
 test -d /run/whatsapp-lock
 test ! -L /run/whatsapp-lock
-chmod 0770 /run/whatsapp-worker
 chmod 0750 /run/whatsapp-lock
 test ! -L /run/whatsapp-lock/worker.lock
 if [ ! -e /run/whatsapp-lock/worker.lock ]; then

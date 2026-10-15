@@ -11,7 +11,7 @@ StartLimitBurst=3
 [Service]
 Type=simple
 Group=988
-RuntimeDirectory=whatsapp-worker whatsapp-lock
+RuntimeDirectory=whatsapp-lock
 RuntimeDirectoryMode=0750
 RuntimeDirectoryPreserve=yes
 WorkingDirectory=/opt/whatsapp-worker

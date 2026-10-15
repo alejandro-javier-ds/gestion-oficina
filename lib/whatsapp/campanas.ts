@@ -11,6 +11,16 @@ import {
   type DestinatarioPreparado,
 } from "./preparacion";
 import {
+  obtenerPlantilla,
+  tieneVariables,
+  validarContactoGestorPlantilla,
+  type CampanaWhatsapp,
+} from "./plantillas";
+import {
+  obtenerPlantillaPdp,
+  type CampanaPdpWhatsapp,
+} from "./plantillas-pdp";
+import {
   normalizarCelularWhatsapp,
   resumirSeguimientoWhatsapp,
   esResultadoInciertoWhatsapp,
@@ -249,7 +259,7 @@ export async function validarDestinosAutorizados(
     "SELECT idc, phone, tipo_telefono, activo::int FROM telefonos WHERE idc = ANY($1::text[])",
     [[...cuentas.keys()]],
   );
-  return destinatarios.map((d) => {
+  const normalizados = destinatarios.map((d) => {
     const cuenta = cuentas.get(d.idc)!;
     if (d.estado !== "PREPARADO")
       return { ...d, cliente: cuenta.cliente, gestor: cuenta.gestor };
@@ -274,6 +284,64 @@ export async function validarDestinosAutorizados(
       tipoTelefono: activo?.tipo_telefono ?? "manual",
     };
   });
+
+  const requierenContacto = normalizados.filter((d) => {
+    if (d.estado !== "PREPARADO") return false;
+    if (tieneVariables(d.mensaje ?? "")) {
+      throw new ErrorCampanaWhatsapp(
+        "El mensaje contiene variables sin completar. Corrige la plantilla antes de continuar.",
+      );
+    }
+    const tenor = d.tenor ?? "";
+    const plantilla =
+      obtenerPlantilla(tenor as CampanaWhatsapp) ||
+      obtenerPlantillaPdp(tenor as CampanaPdpWhatsapp);
+    return (
+      plantilla.includes("{NUMERO_CONTACTO_GESTOR}") ||
+      /\bal\s+n[uú]mero\s*[.!?]*$/i.test(d.mensaje ?? "")
+    );
+  });
+
+  if (requierenContacto.length) {
+    const numeros = await consultarFilas<{
+      numero: string;
+      propietario: string;
+      principal: number;
+    }>(
+      "SELECT numero, propietario, principal::int AS principal FROM whatsapp_numeros WHERE activo = 1 ORDER BY principal DESC, id ASC",
+    );
+    const normalizarPropietario = (valor: string) =>
+      valor
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^\p{L}\p{N}\s]/gu, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase();
+
+    for (const destino of requierenContacto) {
+      const plantillaGestiones = obtenerPlantilla(
+        (destino.tenor ?? "") as CampanaWhatsapp,
+      );
+      const plantillaPdp = obtenerPlantillaPdp(
+        (destino.tenor ?? "") as CampanaPdpWhatsapp,
+      );
+      const plantilla = plantillaGestiones || plantillaPdp || "{NUMERO_CONTACTO_GESTOR}";
+      const propietario = normalizarPropietario(destino.gestor ?? "");
+      const numero = numeros.find(
+        (item) => normalizarPropietario(item.propietario) === propietario,
+      )?.numero;
+      const error = validarContactoGestorPlantilla(
+        plantilla,
+        destino.mensaje ?? "",
+        numero,
+        destino.gestor,
+      );
+      if (error) throw new ErrorCampanaWhatsapp(error, 409);
+    }
+  }
+
+  return normalizados;
 }
 export async function guardarSeleccionCampanaWhatsapp(
   sesion: DatosSesion,

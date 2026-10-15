@@ -1,6 +1,7 @@
 "use client";
 import { Eye, Phone } from "lucide-react";
 import type { SeguimientoCliente } from "@/lib/whatsapp/seguimiento";
+import { formatearFechaHoraLima } from "@/lib/fecha-lima";
 import SeleccionTelefonosWhatsapp from "./SeleccionTelefonosWhatsapp";
 import SeguimientoClienteWhatsapp from "./SeguimientoClienteWhatsapp";
 export type TelefonoWhatsapp = {
@@ -53,7 +54,6 @@ export default function FilaClienteWhatsapp({
   soloSinExito,
   disabled,
 }: Props) {
-  const fecha = new Date(cliente.ultimaGestion);
   return (
     <tr className={seleccionado ? "seleccionada" : ""}>
       <td className="whatsapp-col-check align-top">
@@ -88,13 +88,10 @@ export default function FilaClienteWhatsapp({
       </td>
       <td className="whatsapp-col-fecha align-top">
         <p className="dato-numerico text-sm">
-          {Number.isNaN(fecha.getTime())
-            ? cliente.ultimaGestion
-            : new Intl.DateTimeFormat("es-PE", {
-                timeZone: "America/Lima",
-                dateStyle: "short",
-                timeStyle: "short",
-              }).format(fecha)}
+          {formatearFechaHoraLima(cliente.ultimaGestion, {
+            dateStyle: "short",
+            timeStyle: "short",
+          })}
         </p>
         <p className="mt-1 text-xs">Última gestión</p>
       </td>

@@ -6,7 +6,10 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { Pencil, Trash2 } from "lucide-react";
 import { useSesion } from "@/components/SesionProvider";
-import { formatearFechaLima } from "@/lib/fecha-lima";
+import {
+  fechaHoraLimaAInstante,
+  formatearFechaLima,
+} from "@/lib/fecha-lima";
 
 type FilaFeed = {
   id: number;
@@ -24,7 +27,9 @@ const COLOR_CATEGORIA: Record<string, string> = {
 };
 
 function formatearHaceTiempo(iso: string): string {
-  const diffMs = Date.now() - new Date(iso).getTime();
+  const fecha = fechaHoraLimaAInstante(iso);
+  if (!fecha) return "Fecha no disponible";
+  const diffMs = Date.now() - fecha.getTime();
   const minutos = Math.floor(diffMs / 60000);
 
   if (minutos < 1) return "Hace un momento";

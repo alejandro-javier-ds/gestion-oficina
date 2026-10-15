@@ -38,196 +38,83 @@ import {
   versionSeleccionWhatsapp,
 } from "@/lib/whatsapp/campanas";
 import { normalizarCelularWhatsapp } from "@/lib/whatsapp/seguimiento";
+import {
+  determinarEstadoFinalCampana,
+  type ConteoFinalCampana,
+  type EstadoFinalCampana,
+} from "@/lib/whatsapp/estado-campana";
 export const runtime = "nodejs";
 
 const ROLES_PERMITIDOS = ["administrador", "supervisor"];
 
-const MAX_REINTENTOS_AUTOMATICOS = 1;
-
-const ESPERA_ENTRE_REINTENTOS_MS = 1500;
-
-function esperar(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function esErrorReintentable(detalle: string): boolean {
-  const texto = detalle.toLowerCase();
-
-  const permanentes = [
-    "número inválido",
-    "numero inválido",
-    "numero invalido",
-    "número no válido",
-    "numero no valido",
-    "no existe",
-    "destinatario inexistente",
-    "no tiene whatsapp",
-    "falta teléfono",
-    "falta telefono",
-    "sin teléfono",
-    "sin telefono",
-  ];
-
-  if (permanentes.some((frase) => texto.includes(frase))) {
-    return false;
-  }
-
-  const transitorios = [
-    "timeout",
-    "timed out",
-    "target page",
-    "target closed",
-    "page has been closed",
-    "context has been closed",
-    "browser has been closed",
-    "navigation",
-    "net::",
-    "econn",
-    "socket",
-    "connection",
-    "conexión",
-    "conexion",
-    "desconectado",
-    "disconnect",
-    "network",
-    "networkerror",
-    "temporarily",
-    "temporalmente",
-  ];
-
-  return transitorios.some((frase) => texto.includes(frase));
-}
-
-type ResultadoEnvioConReintento = {
+type ResultadoEnvioCampana = {
   ok: boolean;
 
-  estado: "ENVIADO" | "ERROR";
+  estado: "ENVIADO" | "ERROR" | "INCIERTO";
 
   detalle: string;
 
   duracionMs: number;
 
-  reintentos: number;
 };
 
-async function enviarConReintento(
+async function enviarUnicoIntento(
   numeroSalida: string,
   telefono: string,
   mensaje: string,
   sesion: DatosSesion,
   idEnvio: string,
   idc: string,
+  gestor: string | null,
   tipoTelefono: string,
+  tenor: string | null,
   leaseId: string | null,
-): Promise<ResultadoEnvioConReintento> {
-  let reintentos = 0;
-
-  let duracionTotal = 0;
-
-  let ultimoDetalle = "No se pudo enviar el mensaje.";
-
-  while (true) {
-    const inicio = Date.now();
-
-    try {
-      const actorActual = await actualizarPermisoEnvioWhatsapp(
-        sesion,
-        numeroSalida,
-      );
-      await validarDestinosAutorizados(actorActual, [
-        {
-          idc,
-          cliente: "",
-          gestor: null,
-          telefonoDestino: telefono,
-          tipoTelefono,
-          mensaje,
-          estado: "PREPARADO",
-          error: null,
-          tenor: null,
-        },
-      ]);
-      const resultado = await enviarUnMensajeWhatsapp(
-        numeroSalida,
-        telefono,
+): Promise<ResultadoEnvioCampana> {
+  const inicio = Date.now();
+  let envioInvocado = false;
+  try {
+    const actorActual = await actualizarPermisoEnvioWhatsapp(
+      sesion,
+      numeroSalida,
+    );
+    await validarDestinosAutorizados(actorActual, [
+      {
+        idc,
+        cliente: "",
+        gestor,
+        telefonoDestino: telefono,
+        tipoTelefono,
         mensaje,
-        leaseId ? { ...actorActual, campanaLeaseId: leaseId } : actorActual,
-        idEnvio,
-        leaseId,
-      );
-
-      const duracionReportada = Number(resultado.duracionMs ?? 0);
-
-      const duracionReal = Date.now() - inicio;
-
-      duracionTotal += Math.max(duracionReportada, duracionReal, 0);
-
-      if (resultado.ok) {
-        return {
-          ok: true,
-
-          estado: "ENVIADO",
-
-          detalle:
-            reintentos > 0
-              ? `Enviado después de ${reintentos} reintento.`
-              : resultado.detalle,
-
-          duracionMs: duracionTotal,
-
-          reintentos,
-        };
-      }
-
-      ultimoDetalle = resultado.detalle || "No se pudo enviar el mensaje.";
-
-      if (
-        reintentos >= MAX_REINTENTOS_AUTOMATICOS ||
-        !esErrorReintentable(ultimoDetalle)
-      ) {
-        return {
-          ok: false,
-
-          estado: "ERROR",
-
-          detalle: ultimoDetalle,
-
-          duracionMs: duracionTotal,
-
-          reintentos,
-        };
-      }
-    } catch (error) {
-      const duracionReal = Date.now() - inicio;
-
-      duracionTotal += Math.max(duracionReal, 0);
-
-      ultimoDetalle =
+        estado: "PREPARADO",
+        error: null,
+        tenor,
+      },
+    ]);
+    envioInvocado = true;
+    const resultado = await enviarUnMensajeWhatsapp(
+      numeroSalida,
+      telefono,
+      mensaje,
+      leaseId ? { ...actorActual, campanaLeaseId: leaseId } : actorActual,
+      idEnvio,
+      leaseId,
+    );
+    return {
+      ok: resultado.estado === "ENVIADO" && resultado.ok,
+      estado: resultado.estado,
+      detalle: resultado.detalle,
+      duracionMs: Math.max(Number(resultado.duracionMs ?? 0), Date.now() - inicio),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      estado: envioInvocado ? "INCIERTO" : "ERROR",
+      detalle:
         error instanceof Error
           ? error.message
-          : "Error inesperado durante el envío.";
-
-      if (
-        reintentos >= MAX_REINTENTOS_AUTOMATICOS ||
-        !esErrorReintentable(ultimoDetalle)
-      ) {
-        return {
-          ok: false,
-
-          estado: "ERROR",
-
-          detalle: ultimoDetalle,
-
-          duracionMs: duracionTotal,
-
-          reintentos,
-        };
-      }
-    }
-
-    reintentos++;
-
-    await esperar(ESPERA_ENTRE_REINTENTOS_MS);
+          : "No se pudo completar la operación de envío.",
+      duracionMs: Date.now() - inicio,
+    };
   }
 }
 
@@ -256,33 +143,21 @@ type Destinatario = {
 
   cliente: string | null;
 
+  gestor: string | null;
+
   telefono_destino: string | null;
 
   tipo_telefono: string | null;
 
   mensaje: string | null;
 
+  tenor: string | null;
+
   estado: string;
 };
 
-type EstadoFinalCampana = "ENVIADA" | "ENVIADA_CON_ERRORES" | "ERROR";
-
-type ConteoFinal = {
-  total: number;
-
-  preparados: number;
-
-  enviados: number;
-
-  errores: number;
-
-  sinTelefono: number;
-
-  pendientes: number;
-};
-
-async function contarEstadosCampana(campanaId: number): Promise<ConteoFinal> {
-  const fila = await consultarUno<ConteoFinal>(
+async function contarEstadosCampana(campanaId: number): Promise<ConteoFinalCampana> {
+  const fila = await consultarUno<ConteoFinalCampana>(
     `
         SELECT
           COUNT(*)::int
@@ -304,6 +179,11 @@ async function contarEstadosCampana(campanaId: number): Promise<ConteoFinal> {
             AS errores,
 
           COUNT(*) FILTER (
+            WHERE estado = 'INCIERTO'
+          )::int
+            AS inciertos,
+
+          COUNT(*) FILTER (
             WHERE estado = 'SIN_TELEFONO'
           )::int
             AS "sinTelefono",
@@ -313,7 +193,9 @@ async function contarEstadosCampana(campanaId: number): Promise<ConteoFinal> {
               'PREPARADO',
               'ENVIADO',
               'ERROR',
-              'SIN_TELEFONO'
+              'SIN_TELEFONO',
+              'INCIERTO',
+              'EXCLUIDO'
             )
           )::int
             AS pendientes
@@ -332,45 +214,23 @@ async function contarEstadosCampana(campanaId: number): Promise<ConteoFinal> {
 
     errores: fila?.errores ?? 0,
 
+    inciertos: fila?.inciertos ?? 0,
+
     sinTelefono: fila?.sinTelefono ?? 0,
 
     pendientes: fila?.pendientes ?? 0,
   };
 }
 
-function determinarEstadoFinal(
-  conteo: ConteoFinal,
-  forzadamenteError = false,
-): EstadoFinalCampana {
-  if (conteo.enviados === conteo.total && conteo.total > 0) {
-    return "ENVIADA";
-  }
-
-  if (conteo.enviados > 0) {
-    return "ENVIADA_CON_ERRORES";
-  }
-
-  if (conteo.total > 0 && conteo.errores > 0) {
-    return "ERROR";
-  }
-
-  if (forzadamenteError) {
-    return "ERROR";
-  }
-
-  return "ERROR";
-}
-
 async function sincronizarCampanaConBD(
   campanaId: number,
-  forzadamenteError = false,
 ): Promise<{
   estado: EstadoFinalCampana;
-  conteo: ConteoFinal;
+  conteo: ConteoFinalCampana;
 }> {
   const conteo = await contarEstadosCampana(campanaId);
 
-  const estado = determinarEstadoFinal(conteo, forzadamenteError);
+  const estado = determinarEstadoFinalCampana(conteo);
 
   await ejecutar(
     `
@@ -379,17 +239,20 @@ async function sincronizarCampanaConBD(
 
       SET
         total_preparados = $1,
-        total_fallidos = $2,
-        total_enviados = $3,
-        estado = $4
+        total_sin_telefono = $2,
+        total_fallidos = $3,
+        total_enviados = $4,
+        estado = $5
 
       WHERE
-        id = $5
+        id = $6
     `,
     [
-      conteo.total - conteo.sinTelefono,
+      conteo.preparados,
 
-      conteo.errores + conteo.sinTelefono,
+      conteo.sinTelefono,
+
+      conteo.errores,
 
       conteo.enviados,
 
@@ -643,7 +506,7 @@ export async function POST(request: NextRequest) {
           409,
         );
       const pendientes = await consultarFilas<Destinatario>(
-        `SELECT id::int, idc, cliente, telefono_destino, tipo_telefono, mensaje, estado FROM (${DESTINOS_ACTUALES_SQL}) AS actuales WHERE estado = 'PREPARADO' ORDER BY id`,
+        `SELECT id::int, idc, cliente, gestor, telefono_destino, tipo_telefono, mensaje, tenor, estado FROM (${DESTINOS_ACTUALES_SQL}) AS actuales WHERE estado = 'PREPARADO' ORDER BY id`,
         [campanaId],
       );
       if (!pendientes.length)
@@ -661,13 +524,13 @@ export async function POST(request: NextRequest) {
         pendientes.map((d) => ({
           idc: d.idc,
           cliente: d.cliente ?? "",
-          gestor: null,
+          gestor: d.gestor,
           telefonoDestino: normalizarCelularWhatsapp(d.telefono_destino),
           tipoTelefono: d.tipo_telefono ?? "celular",
           mensaje: d.mensaje,
           estado: "PREPARADO",
           error: null,
-          tenor: null,
+          tenor: d.tenor,
         })),
       );
       return pendientes;
@@ -685,10 +548,6 @@ export async function POST(request: NextRequest) {
     }
 
     const destinatarios = reclamada;
-    let enviados = 0;
-
-    let fallidos = 0;
-
     const resultados: Array<{
       id: number;
 
@@ -698,7 +557,7 @@ export async function POST(request: NextRequest) {
 
       telefonoDestino: string | null;
 
-      estado: "ENVIADO" | "ERROR";
+      estado: "ENVIADO" | "ERROR" | "INCIERTO";
 
       detalle: string;
 
@@ -713,8 +572,6 @@ export async function POST(request: NextRequest) {
       const mensaje = destinatario.mensaje ?? "";
 
       if (!telefono || !mensaje.trim()) {
-        fallidos++;
-
         await ejecutar(
           `
             UPDATE
@@ -756,29 +613,27 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      await ejecutar(
-        "UPDATE whatsapp_campana_destinatarios SET estado = 'ENVIANDO', fecha_procesamiento = $1 WHERE id = $2 AND campana_id = $3 AND estado = 'PREPARADO'",
+      const iniciado = await consultarUno<{ id: number }>(
+        "UPDATE whatsapp_campana_destinatarios SET estado = 'ENVIANDO', fecha_procesamiento = $1 WHERE id = $2 AND campana_id = $3 AND estado = 'PREPARADO' RETURNING id::int AS id",
         [fecha, destinatario.id, campanaId],
       );
-      const resultado = await enviarConReintento(
+      if (!iniciado) continue;
+      const resultado = await enviarUnicoIntento(
         campana.numero_salida,
         telefono,
         mensaje,
         sesion,
         identificadorEnvioWhatsapp(campanaId, destinatario.id),
         destinatario.idc,
+        destinatario.gestor,
         destinatario.tipo_telefono ?? "celular",
+        destinatario.tenor,
         leaseId,
       );
 
-      const detalleFinal =
-        resultado.reintentos > 0
-          ? `${resultado.detalle} (reintentos: ${resultado.reintentos})`
-          : resultado.detalle;
+      const detalleFinal = resultado.detalle;
 
       if (resultado.ok) {
-        enviados++;
-
         await ejecutar(
           `
             UPDATE
@@ -806,6 +661,8 @@ export async function POST(request: NextRequest) {
 
               AND campana_id =
                 $5
+
+              AND estado = 'ENVIANDO'
           `,
           [
             new Date().toISOString(),
@@ -820,16 +677,13 @@ export async function POST(request: NextRequest) {
           ],
         );
       } else {
-        fallidos++;
-
         await ejecutar(
           `
             UPDATE
               whatsapp_campana_destinatarios
 
             SET
-              estado =
-                'ERROR',
+              estado = $7,
 
               error =
                 $1,
@@ -849,6 +703,8 @@ export async function POST(request: NextRequest) {
 
               AND campana_id =
                 $6
+
+              AND estado = 'ENVIANDO'
           `,
           [
             detalleFinal,
@@ -862,6 +718,8 @@ export async function POST(request: NextRequest) {
             destinatario.id,
 
             campanaId,
+
+            resultado.estado,
           ],
         );
       }
@@ -891,43 +749,7 @@ export async function POST(request: NextRequest) {
       conteo,
     } = sincronizacion;
 
-    if (conteo.preparados > 0 || conteo.pendientes > 0) {
-      await ejecutar(
-        `
-          UPDATE
-            whatsapp_campanas
-
-          SET
-            total_enviados =
-              $1,
-
-            total_fallidos =
-              $2,
-
-            estado =
-              'ENVIADA_CON_ERRORES'
-
-          WHERE
-            id =
-              $3
-        `,
-        [
-          conteo.enviados,
-
-          conteo.errores +
-            conteo.sinTelefono +
-            conteo.preparados +
-            conteo.pendientes,
-
-          campanaId,
-        ],
-      );
-    }
-
-    const estadoCampanaReal =
-      conteo.preparados > 0 || conteo.pendientes > 0
-        ? "ENVIADA_CON_ERRORES"
-        : estadoFinal;
+    const estadoCampanaReal = estadoFinal;
 
     const temporal = await esSesionWhatsappTemporal(
       campana.numero_salida,
@@ -962,13 +784,23 @@ export async function POST(request: NextRequest) {
 
       total: conteo.total,
 
-      enviados: conteo.enviados,
-
-      fallidos:
+      procesados:
+        conteo.enviados +
         conteo.errores +
         conteo.sinTelefono +
-        conteo.preparados +
-        conteo.pendientes,
+        conteo.inciertos,
+
+      enviados: conteo.enviados,
+
+      fallidos: conteo.errores + conteo.sinTelefono,
+
+      sinTelefono: conteo.sinTelefono,
+
+      preparados: conteo.preparados,
+
+      inciertos: conteo.inciertos,
+
+      pendientes: conteo.preparados + conteo.pendientes,
 
       resultados,
 
@@ -985,12 +817,24 @@ export async function POST(request: NextRequest) {
       );
     console.error("Error enviando campaña WhatsApp:", error);
 
+    try {
+      await ejecutar(
+        "UPDATE whatsapp_campana_destinatarios SET estado = 'INCIERTO', error = COALESCE(error, 'La operación se interrumpió y requiere verificación manual.'), fecha_procesamiento = COALESCE(fecha_procesamiento, $1) WHERE campana_id = $2 AND estado = 'ENVIANDO'",
+        [new Date().toISOString(), campanaId],
+      );
+    } catch (errorIncierto) {
+      console.error(
+        "No se pudo marcar como incierto el destinatario interrumpido:",
+        errorIncierto,
+      );
+    }
+
     let estadoRecuperado: EstadoFinalCampana | null = null;
 
-    let conteoRecuperado: ConteoFinal | null = null;
+    let conteoRecuperado: ConteoFinalCampana | null = null;
 
     try {
-      const sincronizacion = await sincronizarCampanaConBD(campanaId, true);
+      const sincronizacion = await sincronizarCampanaConBD(campanaId);
 
       estadoRecuperado = sincronizacion.estado;
 
@@ -1012,11 +856,25 @@ export async function POST(request: NextRequest) {
 
         enviados: conteoRecuperado?.enviados ?? 0,
 
-        fallidos: conteoRecuperado
-          ? conteoRecuperado.errores +
+        procesados: conteoRecuperado
+          ? conteoRecuperado.enviados +
+            conteoRecuperado.errores +
             conteoRecuperado.sinTelefono +
-            conteoRecuperado.preparados +
-            conteoRecuperado.pendientes
+            conteoRecuperado.inciertos
+          : 0,
+
+        fallidos: conteoRecuperado
+          ? conteoRecuperado.errores + conteoRecuperado.sinTelefono
+          : 0,
+
+        sinTelefono: conteoRecuperado?.sinTelefono ?? 0,
+
+        preparados: conteoRecuperado?.preparados ?? 0,
+
+        inciertos: conteoRecuperado?.inciertos ?? 0,
+
+        pendientes: conteoRecuperado
+          ? conteoRecuperado.preparados + conteoRecuperado.pendientes
           : 0,
 
         error:

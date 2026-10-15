@@ -117,7 +117,8 @@ sudo docker build --platform linux/amd64 -f docker/whatsapp-vm/Dockerfile \
 IMAGE_ID="$(sudo docker image inspect "whatsapp-caillaux:$REVISION" --format '{{.Id}}')"
 CLIENT_FINGERPRINT='HUELLA_SHA256_DEL_CERTIFICADO_CLIENTE'
 printf '%s\n' "WHATSAPP_IMAGE=$IMAGE_ID" "WHATSAPP_DATA_UUID=$DATA_UUID" \
-  "WHATSAPP_CLIENT_FINGERPRINTS=$CLIENT_FINGERPRINT" 'WHATSAPP_MAX_SESSIONS=3' | \
+  "WHATSAPP_CLIENT_FINGERPRINTS=$CLIENT_FINGERPRINT" 'WHATSAPP_MAX_SESSIONS=3' \
+  'WHATSAPP_SEND_CONFIRM_TIMEOUT_MS=15000' | \
   sudo tee /etc/whatsapp-worker/worker.env >/dev/null
 sudo chown root:root /etc/whatsapp-worker/worker.env
 sudo chmod 600 /etc/whatsapp-worker/worker.env
@@ -253,7 +254,9 @@ systemd-analyze calendar '*-*-* 03:00:00 America/Lima'
 sudo systemctl is-enabled whatsapp-backup.timer || true
 ```
 
-Al reiniciar `whatsapp-worker.service`, `systemd` crea `/run/whatsapp-worker` y `/run/whatsapp-lock`; el preflight ajusta los permisos de socket, crea el archivo compartido de `flock` de forma segura y aborta si encuentra un enlace o tipo de archivo inesperado.
+Al reiniciar `whatsapp-worker.service`, `systemd` administra únicamente `/run/whatsapp-lock`. El preflight crea `/run/whatsapp-worker` si no existe y exige propietario UID `999`, GID `988`, modo `0700` y escritura comprobada como `whatsappsvc` antes de arrancar el contenedor. El worker usa ese directorio para su socket privado. El preflight también crea el archivo compartido de `flock` de forma segura y aborta si encuentra enlaces o tipos de archivo inesperados.
+
+`WHATSAPP_SEND_CONFIRM_TIMEOUT_MS` controla cuánto espera Playwright la confirmación del mensaje, con un valor predeterminado de 15 segundos y límites de 5 a 30 segundos. Si al vencer el plazo no hay confirmación suficiente, el envío queda `INCIERTO` y no se reintenta automáticamente.
 
 La instalación de la clave pública se hace una sola vez desde el canal administrativo aprobado. Antes de una ejecución, confirmar que el archivo exista, pueda leerse y no sea un enlace; el preflight del coordinador repite esas comprobaciones y omite el mantenimiento si alguna falla:
 

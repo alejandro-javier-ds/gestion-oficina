@@ -36,6 +36,8 @@ type Conteo = {
   errores: number;
   sin_telefono: number;
   preparados: number;
+  inciertos: number;
+  en_proceso: number;
 };
 
 export async function GET(request: NextRequest) {
@@ -139,7 +141,17 @@ export async function GET(request: NextRequest) {
             COUNT(*) FILTER (
               WHERE estado = 'PREPARADO'
             )::int
-              AS preparados
+              AS preparados,
+
+            COUNT(*) FILTER (
+              WHERE estado = 'INCIERTO'
+            )::int
+              AS inciertos,
+
+            COUNT(*) FILTER (
+              WHERE estado = 'ENVIANDO'
+            )::int
+              AS en_proceso
 
           FROM (${DESTINOS_ACTUALES_SQL}) AS actuales
         `,
@@ -155,8 +167,10 @@ export async function GET(request: NextRequest) {
     const sinTelefono = conteo?.sin_telefono ?? 0;
 
     const preparados = conteo?.preparados ?? 0;
+    const inciertos = conteo?.inciertos ?? 0;
+    const enProceso = conteo?.en_proceso ?? 0;
 
-    const procesados = enviados + errores + sinTelefono;
+    const procesados = enviados + errores + sinTelefono + inciertos;
 
     const pendientes = Math.max(0, total - procesados);
 
@@ -181,6 +195,10 @@ export async function GET(request: NextRequest) {
         sinTelefono,
 
         preparados,
+
+        inciertos,
+
+        enProceso,
 
         pendientes,
       },

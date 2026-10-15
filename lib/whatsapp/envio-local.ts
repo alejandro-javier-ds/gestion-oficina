@@ -1,15 +1,12 @@
-// lib/whatsapp/envio.ts
-//
-// Servicio REAL de envío de WhatsApp.
-//
-// El motor de campaña se encarga de:
-// - reintentos
-// - reanudación
-// - múltiples campañas
-// - estados de BD
-
 import { type Page } from "playwright";
-
+import {
+  destinoCoincideConChatWhatsapp,
+  evaluarConfirmacionEnvioWhatsapp,
+  esperarConfirmacionWhatsapp,
+  normalizarTextoMensajeWhatsapp,
+  tiempoConfirmacionWhatsapp,
+  type EstadoResultadoEnvioWhatsapp,
+} from "./confirmacion-envio";
 import {
   obtenerPaginaWhatsapp,
   obtenerEstadoWhatsapp,
@@ -22,18 +19,25 @@ export type ResultadoEnvioWhatsapp = {
   numeroSalida: string;
   telefonoDestino: string;
   mensaje: string;
-  estado: "ENVIADO" | "ERROR";
+  estado: EstadoResultadoEnvioWhatsapp;
   detalle: string;
   duracionMs: number;
 };
 
+type MensajeSaliente = {
+  id: string;
+  texto: string;
+  indicadores: string[];
+};
+
 const INTERVALO_MINIMO_MS = 2_000;
-
 const INTERVALO_MAXIMO_MS = 4_000;
-
-const TIMEOUT_CONFIRMACION_MS = 4_000;
-
-const POLLING_CONFIRMACION_MS = 150;
+const POLLING_CONFIRMACION_MS = 200;
+const SELECTORES_MENSAJE_SALIENTE = [
+  '[data-testid="msg-container"].message-out',
+  '[data-testid="msg-container"] .message-out',
+  "div.message-out",
+];
 
 function esperar(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -51,18 +55,19 @@ function construirUrlChat(telefono: string): string {
   return `https://web.whatsapp.com/send?phone=51${telefono}`;
 }
 
-async function verificarWhatsappDisponible(pagina: Page): Promise<void> {
-  const url = pagina.url();
+function construirResultado(
+  datos: Omit<ResultadoEnvioWhatsapp, "ok">,
+): ResultadoEnvioWhatsapp {
+  return { ...datos, ok: datos.estado === "ENVIADO" };
+}
 
-  if (!url.includes("web.whatsapp.com")) {
+async function verificarWhatsappDisponible(pagina: Page): Promise<void> {
+  if (!pagina.url().includes("web.whatsapp.com")) {
     throw new Error("La sesión no está ubicada en WhatsApp Web.");
   }
 
   try {
-    await pagina.locator("body").waitFor({
-      state: "visible",
-      timeout: 5_000,
-    });
+    await pagina.locator("body").waitFor({ state: "visible", timeout: 5_000 });
   } catch {
     throw new Error("La interfaz de WhatsApp Web no está disponible.");
   }
@@ -70,13 +75,14 @@ async function verificarWhatsappDisponible(pagina: Page): Promise<void> {
 
 async function abrirChat(pagina: Page, telefono: string): Promise<void> {
   await verificarWhatsappDisponible(pagina);
-
   await pagina.goto(construirUrlChat(telefono), {
     waitUntil: "domcontentloaded",
     timeout: 30_000,
   });
-
   await esperar(1_000);
+  if (!destinoCoincideConChatWhatsapp(pagina.url(), telefono)) {
+    throw new Error("No se pudo verificar el teléfono abierto en WhatsApp Web.");
+  }
 }
 
 async function esperarCajaMensaje(pagina: Page): Promise<void> {
@@ -88,16 +94,9 @@ async function esperarCajaMensaje(pagina: Page): Promise<void> {
   for (const selector of selectores) {
     try {
       const caja = pagina.locator(selector).last();
-
-      await caja.waitFor({
-        state: "visible",
-        timeout: 8_000,
-      });
-
-      if (await caja.isEditable()) {
-        return;
-      }
-    } catch { }
+      await caja.waitFor({ state: "visible", timeout: 8_000 });
+      if (await caja.isEditable()) return;
+    } catch {}
   }
 
   throw new Error("No se encontró la caja de mensaje de WhatsApp.");
@@ -112,157 +111,135 @@ async function escribirMensaje(pagina: Page, mensaje: string): Promise<void> {
   for (const selector of selectores) {
     try {
       const caja = pagina.locator(selector).last();
-
-      if ((await caja.isVisible()) && (await caja.isEditable())) {
+      if (await caja.isVisible() && await caja.isEditable()) {
         await caja.click();
-
         await caja.fill(mensaje);
-
         return;
       }
-    } catch { }
+    } catch {}
   }
 
   throw new Error("No se pudo escribir el mensaje.");
 }
 
-async function contarMensajesSalientes(pagina: Page): Promise<number> {
-  const selectores = [
-    '[data-testid="msg-container"].message-out',
-    '[data-testid="msg-container"] .message-out',
-    "div.message-out",
-  ];
-
-  let mayorCantidad = 0;
-
-  for (const selector of selectores) {
+async function leerMensajesSalientes(pagina: Page): Promise<MensajeSaliente[]> {
+  for (const selector of SELECTORES_MENSAJE_SALIENTE) {
     try {
-      const cantidad = await pagina.locator(selector).count();
+      const mensajes = await pagina.locator(selector).evaluateAll((elementos) => {
+        const nodos = [
+          ...new Set(
+            elementos.map(
+              (elemento) =>
+                elemento.closest('[data-testid="msg-container"]') ?? elemento,
+            ),
+          ),
+        ];
 
-      if (cantidad > mayorCantidad) {
-        mayorCantidad = cantidad;
-      }
-    } catch { }
+        return nodos.map((elemento) => {
+          const contenido =
+            elemento.querySelector('[data-testid="selectable-text"]') ??
+            elemento.querySelector(".selectable-text") ??
+            elemento.querySelector(".copyable-text");
+          const objetivoId =
+            elemento.getAttribute("data-id") ??
+            elemento.querySelector("[data-id]")?.getAttribute("data-id") ??
+            "";
+          const indicadores = [elemento, ...elemento.querySelectorAll("[data-icon], [aria-label]")]
+            .flatMap((nodo) => [
+              nodo.getAttribute("data-icon") ?? "",
+              nodo.getAttribute("aria-label") ?? "",
+            ])
+            .filter(Boolean);
+
+          return {
+            id: objetivoId,
+            texto: contenido?.textContent ?? "",
+            indicadores,
+          };
+        });
+      });
+
+      if (mensajes.length) return mensajes;
+    } catch {}
   }
 
-  return mayorCantidad;
+  return [];
 }
 
-function obtenerUltimoMensajeSaliente(pagina: Page) {
-  const selectores = [
-    '[data-testid="msg-container"].message-out',
-    '[data-testid="msg-container"] .message-out',
-    "div.message-out",
-  ];
-
-  for (const selector of selectores) {
-    const locator = pagina.locator(selector);
-
-    if (locator) {
-      return locator.last();
-    }
-  }
-
-  return null;
+function clasificarIndicadores(indicadores: string[]): {
+  confirmado: boolean;
+  error: boolean;
+} {
+  const texto = indicadores.join(" ").toLowerCase();
+  return {
+    confirmado: /msg-check|msg-dblcheck|enviado|entregado|le[ií]do|sent|delivered|read/.test(
+      texto,
+    ),
+    error: /msg-error|reintentar|volver a enviar|retry|failed|no se pudo enviar/.test(
+      texto,
+    ),
+  };
 }
 
 async function esperarConfirmacionEnvio(
   pagina: Page,
-  cantidadAntes: number,
-): Promise<void> {
-  const inicio = Date.now();
+  telefono: string,
+  mensaje: string,
+  cantidadAnterior: number,
+  accionIniciada: boolean,
+): Promise<{ estado: EstadoResultadoEnvioWhatsapp; detalle: string }> {
+  const timeout = tiempoConfirmacionWhatsapp();
+  const textoEsperado = normalizarTextoMensajeWhatsapp(mensaje);
+  const estado = await esperarConfirmacionWhatsapp(async () => {
+    const destinoCoincide = destinoCoincideConChatWhatsapp(
+      pagina.url(),
+      telefono,
+    );
+    const coincidencias = (await leerMensajesSalientes(pagina)).filter(
+      (item) => normalizarTextoMensajeWhatsapp(item.texto) === textoEsperado,
+    );
+    const mensajeNuevoCoincide = coincidencias.length > cantidadAnterior;
+    const mensajeNuevo = mensajeNuevoCoincide
+      ? coincidencias[coincidencias.length - 1]
+      : undefined;
+    const indicadores = clasificarIndicadores(mensajeNuevo?.indicadores ?? []);
+    return evaluarConfirmacionEnvioWhatsapp({
+      destinoCoincide,
+      mensajeNuevoCoincide,
+      confirmacionVisible: indicadores.confirmado,
+      errorVisible: indicadores.error,
+      accionIniciada,
+    });
+  }, timeout, POLLING_CONFIRMACION_MS);
 
-  while (Date.now() - inicio < TIMEOUT_CONFIRMACION_MS) {
-    const cantidadActual = await contarMensajesSalientes(pagina);
+  if (estado === "ENVIADO")
+    return {
+      estado,
+      detalle: "WhatsApp Web confirmó el mensaje nuevo en el chat de destino.",
+    };
 
-    if (cantidadActual > cantidadAntes) {
-      const ultimo = obtenerUltimoMensajeSaliente(pagina);
+  if (estado === "ERROR")
+    return {
+      estado,
+      detalle: "WhatsApp Web indicó que el mensaje no pudo enviarse.",
+    };
 
-      if (ultimo) {
-        const selectoresError = [
-          '[data-icon="msg-error"]',
-          '[data-icon="error"]',
-          '[aria-label*="Reintentar"]',
-          '[aria-label*="reintentar"]',
-          '[aria-label*="Volver a enviar"]',
-          '[aria-label*="volver a enviar"]',
-          '[aria-label*="Retry"]',
-          '[aria-label*="retry"]',
-        ];
-
-        for (const selector of selectoresError) {
-          try {
-            const errorLocator = ultimo.locator(selector);
-
-            if ((await errorLocator.count()) > 0) {
-              const visible = errorLocator.last();
-
-              if (await visible.isVisible()) {
-                throw new Error(
-                  "WhatsApp Web indicó que el mensaje no pudo enviarse.",
-                );
-              }
-            }
-          } catch (error) {
-            if (
-              error instanceof Error &&
-              error.message.includes("WhatsApp Web indicó")
-            ) {
-              throw error;
-            }
-          }
-        }
-
-        const selectoresExito = [
-          '[data-icon="msg-check"]',
-          '[data-icon="msg-dblcheck"]',
-          '[aria-label*="Enviado"]',
-          '[aria-label*="enviado"]',
-          '[aria-label*="Sent"]',
-          '[aria-label*="sent"]',
-        ];
-
-        for (const selector of selectoresExito) {
-          try {
-            const checkLocator = ultimo.locator(selector);
-
-            if ((await checkLocator.count()) > 0) {
-              const check = checkLocator.last();
-
-              if (await check.isVisible()) {
-                return;
-              }
-            }
-          } catch { }
-        }
-
-        await esperar(250);
-
-        for (const selector of selectoresExito) {
-          try {
-            const checkLocator = ultimo.locator(selector);
-
-            if ((await checkLocator.count()) > 0) {
-              const check = checkLocator.last();
-
-              if (await check.isVisible()) {
-                return;
-              }
-            }
-          } catch { }
-        }
-      }
-    }
-
-    await esperar(POLLING_CONFIRMACION_MS);
-  }
-
-  throw new Error(
-    "WhatsApp Web no confirmó el envío del mensaje dentro del tiempo esperado.",
-  );
+  return {
+    estado,
+    detalle:
+      "El mensaje pudo haberse enviado, pero WhatsApp Web no confirmó el resultado. No se reintentará automáticamente.",
+  };
 }
 
-async function enviarMensaje(pagina: Page): Promise<void> {
+async function enviarMensaje(
+  pagina: Page,
+  alIniciarAccion: () => void,
+): Promise<void> {
+  let accionIniciada = false;
+  const iniciarAccion = () => {
+    accionIniciada = true;
+    alIniciarAccion();
+  };
   const selectoresBoton = [
     'button[aria-label="Enviar"]',
     'button[aria-label*="Enviar"]',
@@ -273,13 +250,14 @@ async function enviarMensaje(pagina: Page): Promise<void> {
   for (const selector of selectoresBoton) {
     try {
       const boton = pagina.locator(selector).last();
-
       if (await boton.isVisible()) {
+        iniciarAccion();
         await boton.click();
-
         return;
       }
-    } catch { }
+    } catch (error) {
+      if (accionIniciada) throw error;
+    }
   }
 
   const cajas = [
@@ -290,22 +268,17 @@ async function enviarMensaje(pagina: Page): Promise<void> {
   for (const selector of cajas) {
     try {
       const caja = pagina.locator(selector).last();
-
       if (await caja.isVisible()) {
+        iniciarAccion();
         await caja.press("Enter");
-
         return;
       }
-    } catch { }
+    } catch (error) {
+      if (accionIniciada) throw error;
+    }
   }
 
   throw new Error("No se encontró el control de envío de WhatsApp.");
-}
-
-async function esperarEntreMensajes(): Promise<void> {
-  const intervalo = obtenerIntervaloAleatorio();
-
-  await esperar(intervalo);
 }
 
 export async function enviarUnMensajeWhatsapp(
@@ -314,93 +287,84 @@ export async function enviarUnMensajeWhatsapp(
   mensaje: string,
 ): Promise<ResultadoEnvioWhatsapp> {
   const inicio = Date.now();
-
   const numeroSalida = normalizarNumeroWhatsapp(numeroSalidaEntrada);
-
   const telefonoDestino = normalizarNumeroWhatsapp(telefonoDestinoEntrada);
-
-  if (!esNumeroWhatsappValido(numeroSalida)) {
-    throw new Error("El número de salida no es válido.");
-  }
-
-  if (!esNumeroWhatsappValido(telefonoDestino)) {
-    throw new Error("El teléfono de destino no es válido.");
-  }
-
   const mensajeLimpio = mensaje.trim();
-
-  if (!mensajeLimpio) {
-    throw new Error("El mensaje no puede estar vacío.");
-  }
-
-  const estado = await obtenerEstadoWhatsapp(numeroSalida);
-
-  if (!estado.conectado) {
-    throw new Error(
-      `El número de salida ${numeroSalida} no está conectado a WhatsApp Web.`,
-    );
-  }
-
-  const pagina = obtenerPaginaWhatsapp(numeroSalida);
-
-  if (!pagina || pagina.isClosed()) {
-    throw new Error(`No existe una sesión activa para ${numeroSalida}.`);
-  }
+  let accionIniciada = false;
 
   try {
+    if (!esNumeroWhatsappValido(numeroSalida)) {
+      throw new Error("El número de salida no es válido.");
+    }
+    if (!esNumeroWhatsappValido(telefonoDestino)) {
+      throw new Error("El teléfono de destino no es válido.");
+    }
+    if (!mensajeLimpio) throw new Error("El mensaje no puede estar vacío.");
+
+    const estadoWhatsapp = await obtenerEstadoWhatsapp(numeroSalida);
+    if (!estadoWhatsapp.conectado) {
+      throw new Error(
+        `El número de salida ${numeroSalida} no está conectado a WhatsApp Web.`,
+      );
+    }
+
+    const pagina = obtenerPaginaWhatsapp(numeroSalida);
+    if (!pagina || pagina.isClosed()) {
+      throw new Error(`No existe una sesión activa para ${numeroSalida}.`);
+    }
+
     await abrirChat(pagina, telefonoDestino);
-
     await esperarCajaMensaje(pagina);
-
-    const cantidadMensajesAntes = await contarMensajesSalientes(pagina);
-
     await escribirMensaje(pagina, mensajeLimpio);
-
     await esperar(300);
 
-    await enviarMensaje(pagina);
+    if (!destinoCoincideConChatWhatsapp(pagina.url(), telefonoDestino)) {
+      throw new Error("El chat cambió antes de iniciar el envío.");
+    }
 
-    await esperarConfirmacionEnvio(pagina, cantidadMensajesAntes);
+    const textoEsperado = normalizarTextoMensajeWhatsapp(mensajeLimpio);
+    const cantidadAnterior = (await leerMensajesSalientes(pagina)).filter(
+      (item) => normalizarTextoMensajeWhatsapp(item.texto) === textoEsperado,
+    ).length;
 
-    const duracionMs = Date.now() - inicio;
+    await enviarMensaje(pagina, () => {
+      accionIniciada = true;
+    });
 
-    await esperarEntreMensajes();
-
-    return {
-      ok: true,
-
-      numeroSalida,
-
+    const confirmacion = await esperarConfirmacionEnvio(
+      pagina,
       telefonoDestino,
+      mensajeLimpio,
+      cantidadAnterior,
+      accionIniciada,
+    );
 
+    if (confirmacion.estado === "ENVIADO") {
+      await esperar(obtenerIntervaloAleatorio());
+    }
+
+    return construirResultado({
+      numeroSalida,
+      telefonoDestino,
       mensaje: mensajeLimpio,
-
-      estado: "ENVIADO",
-
-      detalle: "WhatsApp Web confirmó el nuevo mensaje saliente.",
-
-      duracionMs,
-    };
+      estado: confirmacion.estado,
+      detalle: confirmacion.detalle,
+      duracionMs: Date.now() - inicio,
+    });
   } catch (error) {
-    const duracionMs = Date.now() - inicio;
-
-    return {
-      ok: false,
-
+    const estado = accionIniciada ? "INCIERTO" : "ERROR";
+    return construirResultado({
       numeroSalida,
-
       telefonoDestino,
-
       mensaje: mensajeLimpio,
-
-      estado: "ERROR",
-
+      estado,
       detalle:
-        error instanceof Error
-          ? error.message
-          : "Error desconocido durante el envío.",
-
-      duracionMs,
-    };
+        accionIniciada
+          ? "La acción de envío pudo completarse, pero se interrumpió la confirmación. No se reintentará automáticamente."
+          : error instanceof Error
+            ? error.message
+            : "Error antes de iniciar el envío.",
+      duracionMs: Date.now() - inicio,
+    });
   }
 }

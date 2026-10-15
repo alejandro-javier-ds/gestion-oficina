@@ -107,3 +107,23 @@ export function reemplazarVariablesMensaje(
 export function tieneVariables(plantilla: string): boolean {
   return /\{[A-Z_]+\}/.test(plantilla);
 }
+
+export function validarContactoGestorPlantilla(
+  plantilla: string,
+  mensaje: string,
+  numeroContacto: string | null | undefined,
+  gestor: string | null | undefined,
+): string | null {
+  if (!plantilla.includes("{NUMERO_CONTACTO_GESTOR}")) return null;
+  const numero = (numeroContacto ?? "").replace(/\D/g, "");
+  const celular = numero.startsWith("51") ? numero.slice(2) : numero;
+  if (!/^9\d{8}$/.test(celular)) {
+    return `El gestor asignado${gestor ? ` ${gestor}` : ""} no tiene un número de contacto registrado. Regístralo antes de preparar el envío.`;
+  }
+  const coincidencia = /al número(?: de contacto)?\s*[:\-]?\s*(?:\+?51[\s()-]*)?(9(?:[\s()-]*\d){8})(?!\d)/i.exec(mensaje);
+  const numeroEnMensaje = coincidencia?.[1].replace(/\D/g, "");
+  if (numeroEnMensaje !== celular) {
+    return `El mensaje no incluye el número de contacto del gestor asignado${gestor ? ` ${gestor}` : ""}.`;
+  }
+  return null;
+}

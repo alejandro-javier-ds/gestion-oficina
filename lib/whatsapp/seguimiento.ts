@@ -1,3 +1,5 @@
+import { fechaHoraLimaAInstante } from "@/lib/fecha-lima";
+
 export type TelefonoSeleccionable = {
   phone: string;
   tipo_telefono: string;
@@ -55,6 +57,7 @@ export type SeguimientoCliente = {
   enviados: number;
   pendientes: number;
   fallidos: number;
+  inciertos: number;
   enProceso: number;
   telefonos: SeguimientoTelefono[];
 };
@@ -133,7 +136,10 @@ export function resumirSeguimientoWhatsapp(
         ultimo?.estado === "ENVIANDO" &&
         ultimo.estado_campana === "ENVIANDO" &&
         ultimo.fecha_procesamiento &&
-        Date.now() - Date.parse(ultimo.fecha_procesamiento) < 120_000
+        (() => {
+          const fecha = fechaHoraLimaAInstante(ultimo.fecha_procesamiento);
+          return fecha !== null && Date.now() - fecha.getTime() < 120_000;
+        })()
       )
         estado = "EN_PROCESO";
       else if (
@@ -181,11 +187,10 @@ export function resumirSeguimientoWhatsapp(
     },
   );
   const enviados = detalles.filter((t) => t.estado === "ENVIADO").length;
-  const fallidos = detalles.filter(
-    (t) => t.estado === "FALLIDO" || t.estado === "INCIERTO",
-  ).length;
+  const fallidos = detalles.filter((t) => t.estado === "FALLIDO").length;
+  const inciertos = detalles.filter((t) => t.estado === "INCIERTO").length;
   const enProceso = detalles.filter((t) => t.estado === "EN_PROCESO").length;
-  const estado = fallidos
+  const estado = fallidos || inciertos
     ? "REVISAR"
     : detalles.length > 0 && enviados === detalles.length
       ? "COMPLETADO"
@@ -199,6 +204,7 @@ export function resumirSeguimientoWhatsapp(
     enviados,
     pendientes: detalles.length - enviados,
     fallidos,
+    inciertos,
     enProceso,
     telefonos: detalles,
   };

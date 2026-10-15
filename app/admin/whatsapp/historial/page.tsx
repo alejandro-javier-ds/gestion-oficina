@@ -5,10 +5,11 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { CheckCircle2, Clock3, Search, AlertTriangle } from "lucide-react";
 
 import HeaderPanelAdmin from "@/components/HeaderPanelAdmin";
+import { formatearFechaHoraLima } from "@/lib/fecha-lima";
 
 type Campana = {
   id: number;
@@ -24,6 +25,7 @@ type Campana = {
   total_sin_telefono: number;
   total_fallidos: number;
   total_enviados: number;
+  total_inciertos: number;
   estado: string;
 };
 
@@ -44,28 +46,14 @@ const ESTADOS = [
   "PREPARADA",
   "PREPARADA_CON_ERRORES",
   "ENVIANDO",
+  "ENVIADA",
+  "ENVIADA_CON_ERRORES",
+  "REQUIERE_REVISION",
+  "ERROR",
   "COMPLETADA",
   "COMPLETADA_CON_ERRORES",
   "CANCELADA",
 ];
-
-function fechaHora(valor: string) {
-  const fecha = new Date(valor);
-
-  if (Number.isNaN(fecha.getTime())) {
-    return valor;
-  }
-
-  return new Intl.DateTimeFormat("es-PE", {
-    timeZone: "America/Lima",
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(fecha);
-}
 
 function estadoEtiqueta(estado: string) {
   return estado
@@ -75,13 +63,20 @@ function estadoEtiqueta(estado: string) {
 }
 
 function estadoClase(estado: string) {
-  if (estado === "PREPARADA" || estado === "COMPLETADA") {
+  if (
+    estado === "PREPARADA" ||
+    estado === "COMPLETADA" ||
+    estado === "ENVIADA"
+  ) {
     return "chip chip-exito";
   }
 
   if (
     estado === "PREPARADA_CON_ERRORES" ||
-    estado === "COMPLETADA_CON_ERRORES"
+    estado === "COMPLETADA_CON_ERRORES" ||
+    estado === "REQUIERE_REVISION" ||
+    estado === "ENVIADA_CON_ERRORES" ||
+    estado === "ERROR"
   ) {
     return "chip chip-alerta";
   }
@@ -91,6 +86,17 @@ function estadoClase(estado: string) {
   }
 
   return "chip chip-accion";
+}
+
+function estadoDestinatarioEtiqueta(estado: string) {
+  if (estado === "PREPARADO") return "Preparado";
+  if (estado === "ENVIANDO") return "En proceso";
+  if (estado === "ENVIADO") return "Enviado · confirmado";
+  if (estado === "ERROR") return "Fallido · confirmado";
+  if (estado === "INCIERTO") return "Incierto · no reenviar sin verificar";
+  if (estado === "SIN_TELEFONO") return "Sin teléfono";
+  if (estado === "EXCLUIDO") return "Retirado antes del envío";
+  return estadoEtiqueta(estado);
 }
 
 export default function HistorialWhatsappPage() {
@@ -111,15 +117,7 @@ export default function HistorialWhatsappPage() {
 
   const [cargandoDetalle, setCargandoDetalle] = useState(false);
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      cargarHistorial();
-    }, 250);
-
-    return () => window.clearTimeout(timer);
-  }, [busqueda, estado]);
-
-  async function cargarHistorial() {
+  const cargarHistorial = useCallback(async () => {
     try {
       setCargando(true);
       setError("");
@@ -157,7 +155,15 @@ export default function HistorialWhatsappPage() {
     } finally {
       setCargando(false);
     }
-  }
+  }, [busqueda, estado]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void cargarHistorial();
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  }, [cargarHistorial]);
 
   async function abrirDetalle(campana: Campana) {
     try {
@@ -325,6 +331,7 @@ export default function HistorialWhatsappPage() {
                     <th>Destinatarios</th>
                     <th>Preparados</th>
                     <th>Enviados</th>
+                    <th>Por verificar</th>
                     <th>Estado</th>
                   </tr>
                 </thead>
@@ -341,7 +348,10 @@ export default function HistorialWhatsappPage() {
                       </td>
 
                       <td className="whitespace-nowrap">
-                        {fechaHora(campana.fecha_creacion)}
+                        {formatearFechaHoraLima(campana.fecha_creacion, {
+                          dateStyle: "short",
+                          timeStyle: "short",
+                        })}
                       </td>
 
                       <td className="font-medium">{campana.campana}</td>
@@ -363,6 +373,8 @@ export default function HistorialWhatsappPage() {
                       <td className="dato-numerico">
                         {campana.total_enviados}
                       </td>
+
+                      <td className="dato-numerico">{campana.total_inciertos}</td>
 
                       <td>
                         <span className={estadoClase(campana.estado)}>
@@ -429,7 +441,7 @@ export default function HistorialWhatsappPage() {
               </button>
             </div>
 
-            <div className="grid grid-cols-2 gap-px bg-[var(--color-borde)] sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-px bg-[var(--color-borde)] sm:grid-cols-5">
               <div className="bg-[var(--color-superficie)] p-4">
                 <p className="text-xs text-zinc-500">Seleccionados</p>
                 <p className="mt-1 text-lg font-semibold">
@@ -456,6 +468,13 @@ export default function HistorialWhatsappPage() {
                 <p className="text-xs text-zinc-500">Enviados</p>
                 <p className="mt-1 text-lg font-semibold">
                   {campanaSeleccionada.total_enviados}
+                </p>
+              </div>
+
+              <div className="bg-[var(--color-superficie)] p-4">
+                <p className="text-xs text-zinc-500">Por verificar</p>
+                <p className="mt-1 text-lg font-semibold">
+                  {campanaSeleccionada.total_inciertos}
                 </p>
               </div>
             </div>
@@ -501,7 +520,8 @@ export default function HistorialWhatsappPage() {
 
                         <td>
                           <div className="flex items-center gap-2">
-                            {destinatario.estado === "PREPARADO" ? (
+                            {destinatario.estado === "PREPARADO" ||
+                            destinatario.estado === "ENVIADO" ? (
                               <CheckCircle2
                                 size={15}
                                 style={{
@@ -518,7 +538,7 @@ export default function HistorialWhatsappPage() {
                             )}
 
                             <span className="text-xs">
-                              {destinatario.estado}
+                              {estadoDestinatarioEtiqueta(destinatario.estado)}
                             </span>
                           </div>
 

@@ -5,29 +5,27 @@ import type {
   SeguimientoCliente,
   IntentoWhatsapp,
 } from "@/lib/whatsapp/seguimiento";
+import { formatearFechaHoraLima } from "@/lib/fecha-lima";
 
 const colores = {
   COMPLETADO: "#166534",
   PARCIAL: "#854d0e",
   PENDIENTE: "#475569",
-  REVISAR: "#991b1b",
+  REVISAR: "#92400e",
 };
 const fondos = {
   COMPLETADO: "#dcfce7",
   PARCIAL: "#fef9c3",
   PENDIENTE: "#f1f5f9",
-  REVISAR: "#fee2e2",
+  REVISAR: "#fef3c7",
 };
 export function fechaIntentoWhatsapp(fecha: string | null) {
   if (!fecha) return "Sin intento";
-  const valor = new Date(fecha);
-  return Number.isNaN(valor.getTime())
-    ? "Fecha no disponible"
-    : new Intl.DateTimeFormat("es-PE", {
-        timeZone: "America/Lima",
-        dateStyle: "short",
-        timeStyle: "short",
-      }).format(valor);
+  const valor = formatearFechaHoraLima(fecha, {
+    dateStyle: "short",
+    timeStyle: "short",
+  });
+  return valor === fecha ? "Fecha no disponible" : valor;
 }
 export default function SeguimientoClienteWhatsapp({
   seguimiento,
@@ -53,6 +51,7 @@ export default function SeguimientoClienteWhatsapp({
           <span className="text-[11px]">
             {seguimiento.enviados}/{seguimiento.total} enviados ·{" "}
             {seguimiento.pendientes} pendientes
+            {seguimiento.inciertos > 0 && ` · ${seguimiento.inciertos} por verificar`}
           </span>
         </>
       )}
@@ -200,6 +199,8 @@ function HistorialClienteWhatsapp({
                               ? "En proceso / verificar"
                               : i.estado === "ERROR"
                                 ? "Fallido"
+                                : i.estado === "INCIERTO"
+                                  ? "Incierto · no reenviar sin verificar"
                                 : i.estado === "EXCLUIDO"
                                   ? "Retirado antes de enviar"
                                   : "Pendiente"}

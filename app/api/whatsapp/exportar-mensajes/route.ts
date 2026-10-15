@@ -14,7 +14,13 @@ import ExcelJS from "exceljs";
 import { consultarFilas } from "@/lib/postgres";
 
 import { requerirAccesoApi } from "@/lib/api-acceso";
-import { fechaActualLima } from "@/lib/fecha-lima";
+import {
+  columnaFechaLimaSql,
+  fechaActualLima,
+  formatearFechaHoraLima,
+  formatearFechaLima,
+} from "@/lib/fecha-lima";
+import { resumirCampanasWhatsapp } from "@/lib/whatsapp/exportacion-campanas";
 
 export const runtime = "nodejs";
 
@@ -29,12 +35,15 @@ const COLOR_PAR = "FFF0FDFA";
 const COLOR_IMPAR = "FFFFFFFF";
 
 const COLOR_BORDE = "FFD1D5DB";
+const FECHA_CAMPANA_LIMA = columnaFechaLimaSql("c.fecha_creacion");
 
 type FilaExportacion = {
   fecha_creacion: string;
+  id: number;
   usuario_creador: string | null;
   campana: string;
   gestor: string | null;
+  gestor_destinatario: string | null;
   desde: string;
   hasta: string;
   numero_salida: string;
@@ -63,40 +72,6 @@ type FilaExportacion = {
   moneda_pdp: string | null;
   fecha_pdp: string | null;
 };
-
-function formatearFechaHoraLima(valor: string): string {
-  const fecha = new Date(valor);
-
-  if (Number.isNaN(fecha.getTime())) {
-    return valor;
-  }
-
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Lima",
-
-    year: "numeric",
-
-    month: "2-digit",
-
-    day: "2-digit",
-
-    hour: "2-digit",
-
-    minute: "2-digit",
-
-    hour12: false,
-  })
-    .format(fecha)
-    .replace(", ", " ");
-}
-
-function formatearFecha(valor: string | null): string {
-  if (!valor) {
-    return "";
-  }
-
-  return valor.slice(0, 10);
-}
 
 function esPdp(campana: string): boolean {
   return campana.trim().toUpperCase().startsWith("PDP");
@@ -283,29 +258,28 @@ export async function GET(request: NextRequest) {
   if (desde) {
     const parametro = agregarParametro(desde);
 
-    condiciones.push(`
-      LEFT(
-        c.fecha_creacion::text,
-        10
-      ) >= ${parametro}
-    `);
+    condiciones.push(`${FECHA_CAMPANA_LIMA} >= ${parametro}::date`);
   }
 
   if (hasta) {
     const parametro = agregarParametro(hasta);
 
-    condiciones.push(`
-      LEFT(
-        c.fecha_creacion::text,
-        10
-      ) <= ${parametro}
-    `);
+    condiciones.push(`${FECHA_CAMPANA_LIMA} <= ${parametro}::date`);
   }
 
   if (gestorFiltro) {
     const parametro = agregarParametro(gestorFiltro);
 
-    condiciones.push(`c.gestor = ${parametro}`);
+    condiciones.push(`
+      d.gestor = ${parametro}
+      AND EXISTS (
+        SELECT 1
+        FROM cuentas asignacion_actual
+        WHERE asignacion_actual.idc = d.idc
+          AND asignacion_actual.activo = 1
+          AND asignacion_actual.gestor = ${parametro}
+      )
+    `);
   }
 
   const where =
@@ -320,6 +294,7 @@ export async function GET(request: NextRequest) {
     const filas = await consultarFilas<FilaExportacion>(
       `
           SELECT
+            c.id::int AS id,
             c.fecha_creacion,
             c.usuario_creador,
             c.campana,
@@ -347,6 +322,7 @@ export async function GET(request: NextRequest) {
 
             d.cliente,
             d.idc,
+            d.gestor AS gestor_destinatario,
             d.telefono_destino,
             d.tipo_telefono,
 
@@ -396,7 +372,9 @@ export async function GET(request: NextRequest) {
 
         Campaña: fila.campana,
 
-        Gestor: fila.gestor ?? "",
+        "Gestor asignado": fila.gestor_destinatario ?? "",
+
+        "Gestor de campaña": fila.gestor ?? "",
 
         Desde: fila.desde,
 
@@ -442,9 +420,16 @@ export async function GET(request: NextRequest) {
           width: 30,
         },
         {
-          header: "Gestor",
+          header: "Gestor asignado",
 
-          key: "Gestor",
+          key: "Gestor asignado",
+
+          width: 26,
+        },
+        {
+          header: "Gestor de campaña",
+
+          key: "Gestor de campaña",
 
           width: 26,
         },
@@ -529,7 +514,9 @@ export async function GET(request: NextRequest) {
 
         Campaña: fila.campana,
 
-        Gestor: fila.gestor ?? "",
+        "Gestor asignado": fila.gestor_destinatario ?? "",
+
+        "Gestor de campaña": fila.gestor ?? "",
 
         Desde: fila.desde,
 
@@ -547,7 +534,13 @@ export async function GET(request: NextRequest) {
 
         Moneda: fila.moneda_pdp ?? "",
 
-        "Fecha PDP": formatearFecha(fila.fecha_pdp),
+        "Fecha PDP": fila.fecha_pdp
+          ? formatearFechaLima(fila.fecha_pdp, {
+              year: "numeric",
+              month: "2-digit",
+              day: "2-digit",
+            })
+          : "",
 
         "Teléfono destino": fila.telefono_destino ?? "",
 
@@ -583,9 +576,16 @@ export async function GET(request: NextRequest) {
           width: 24,
         },
         {
-          header: "Gestor",
+          header: "Gestor asignado",
 
-          key: "Gestor",
+          key: "Gestor asignado",
+
+          width: 26,
+        },
+        {
+          header: "Gestor de campaña",
+
+          key: "Gestor de campaña",
 
           width: 26,
         },
@@ -689,6 +689,55 @@ export async function GET(request: NextRequest) {
         },
       ]);
     }
+
+    const filasIncluidas = [
+      ...(incluirGestiones ? filasGestiones : []),
+      ...(incluirPdp ? filasPdp : []),
+    ];
+    const resumenExportacion = resumirCampanasWhatsapp(
+      filasIncluidas.map((fila) => ({
+        campanaId: fila.id,
+        fechaCreacion: fila.fecha_creacion,
+        campana: fila.campana,
+        gestorCampana: fila.gestor,
+        gestorAsignado: fila.gestor_destinatario,
+        numeroSalida: fila.numero_salida,
+        estado: fila.estado_destinatario,
+      })),
+    ).map((resumen) => ({
+      "Fecha campaña": formatearFechaHoraLima(resumen.fechaCreacion, {
+        dateStyle: "short",
+        timeStyle: "short",
+      }),
+      Campaña: resumen.campana,
+      "Gestor de campaña": resumen.gestorCampana ?? "",
+      "Gestores asignados": resumen.gestoresAsignados.join(", "),
+      "Número de salida": resumen.numeroSalida,
+      Seleccionados: resumen.seleccionados,
+      Preparados: resumen.preparados,
+      Enviados: resumen.enviados,
+      Fallidos: resumen.fallidos,
+      Inciertos: resumen.inciertos,
+      "Sin teléfono": resumen.sinTelefono,
+      "En proceso": resumen.enProceso,
+      Excluidos: resumen.excluidos,
+      }));
+
+    construirHoja(libro, "Resumen", resumenExportacion, [
+      { header: "Fecha campaña", key: "Fecha campaña", width: 22 },
+      { header: "Campaña", key: "Campaña", width: 30 },
+      { header: "Gestor de campaña", key: "Gestor de campaña", width: 26 },
+      { header: "Gestores asignados", key: "Gestores asignados", width: 42 },
+      { header: "Número de salida", key: "Número de salida", width: 20 },
+      { header: "Seleccionados", key: "Seleccionados", width: 16 },
+      { header: "Preparados", key: "Preparados", width: 14 },
+      { header: "Enviados", key: "Enviados", width: 12 },
+      { header: "Fallidos", key: "Fallidos", width: 12 },
+      { header: "Inciertos", key: "Inciertos", width: 12 },
+      { header: "Sin teléfono", key: "Sin teléfono", width: 14 },
+      { header: "En proceso", key: "En proceso", width: 14 },
+      { header: "Excluidos", key: "Excluidos", width: 12 },
+    ]);
 
     const buffer = await libro.xlsx.writeBuffer();
 
